@@ -1,11 +1,14 @@
-Dự án MultilingualMT-UET-KC4.0 là dự án open-source được phát triển bởi nhóm UETNLPLab.
+The open-source Multilingual-UET-KC4.0 is developed by UETNLPLab.
 
 # Setup
-## Cài đặt công cụ Multilingual-NMT
 
 **Note**:
-Lưu ý:
-Phiên bản hiện tại chỉ tương thích với python>=3.6
+Note:
+Multilingual-UET-KC4.0 requires:
+
+- python >= 3.6
+- torch 1.8.0+
+
 ```bash
 git clone https://github.com/KCDichDaNgu/KC4.0_MultilingualNMT.git
 cd KC4.0_MultilingualNMT
@@ -15,34 +18,34 @@ pip install -r requirements.txt
 
 ```
 
-## Bước 1: Chuẩn bị dữ liệu
+## Step 1: Data Preparation
 
-Ví dụ thực nghiệm dựa trên cặp dữ liệu Anh-Việt nguồn từ iwslt với 133k cặp câu:
+Iwslt's English-Vietnamese parallel corpus contains 133k sentence pairs:
 
 ```bash
 cd data/iwslt_en_vi
 ```
 
-Dữ liệu bao gồm câu nguồn (`src`) và câu đích (`tgt`) dữ liệu đã được tách từ:
+The dataset contains the source and target sentences, which were all tokenized:
 
 * `train.en`
 * `train.vi`
 * `tst2012.en`
 * `tst2012.vi`
 
-| Data set    | Sentences  |                    Download                   |
-| :---------: | :--------: | :-------------------------------------------: |
-| Training    | 133,317    | via GitHub or located in data/train-en-vi.tgz |
-| Development | 1,553      | via GitHub or located in data/train-en-vi.tgz |
-| Test        | 1,268      | via GitHub or located in data/train-en-vi.tgz |
-
+|  Data set   | Sentences |                   Download                    |
+|:-----------:|:---------:|:---------------------------------------------:|
+|  Training   |  133,317  | via GitHub or located in data/train-en-vi.tgz |
+| Development |   1,553   | via GitHub or located in data/train-en-vi.tgz |
+|    Test     |   1,268   | via GitHub or located in data/train-en-vi.tgz |
 
 **Note**:
-Lưu ý:
-- Dữ liệu trước khi đưa vào huấn luyện cần phải được tokenize. 
-- $CONFIG là đường dẫn tới vị trí chứa file config
+Note:
 
-Tách dữ liệu dev để tính toán hội tụ trong quá trình huấn luyện, thường không lớn hơn 5k câu.
+- Before training the NMT model, the dataset should be tokenized.
+- $CONFIG is the path containing the config file.
+
+The dev set (tst2012) contains 1553 sentence pairs utilized to compute the coverage of the model.
 
 ```text
 $ head -n 5 data/iwslt_en_vi/train.en
@@ -53,22 +56,22 @@ Headlines that look like this when they have to do with climate change , and hea
 They are both two branches of the same field of atmospheric science .
 ```
 
-## Bước 2: Huấn luyện mô hình
+## Step 2: Train a new model
 
-Để huấn luyện một mô hình mới **hãy chỉnh sửa file YAML config**:
-Cần phải sửa lại file config en_vi.yml chỉnh siêu tham số và đường dẫn tới dữ liệu huấn luyện:
+Please change the file config YML to train a new model **YAML config**:
+If you don't change the file config en_vi.yml, the model will be trained by default hyperparameters:
 
 ```yaml
 # data location and config section
 data:
   train_data_location: data/iwslt_en_vi/train
-  eval_data_location:  data/iwslt_en_vi/tst2013
-  src_lang: .en 
-  trg_lang: .vi 
+  eval_data_location: data/iwslt_en_vi/tst2013
+  src_lang: .en
+  trg_lang: .vi
 log_file_models: 'model.log'
 lowercase: false
 build_vocab_kwargs: # additional arguments for build_vocab. See torchtext.vocab.Vocab for mode details
-#  max_size: 50000
+  #  max_size: 50000
   min_freq: 5
 # model parameters section
 device: cuda
@@ -101,51 +104,55 @@ dropout: 0.1
 # training config, evaluation, save & load section
 batch_size: 64
 epochs: 20
-printevery: 200
+print_every: 200
 save_checkpoint_epochs: 1
 maximum_saved_model_eval: 5
 maximum_saved_model_train: 5
 
 ```
 
-Sau đó có thể chạy với câu lệnh:
+Please run the below command to train the model:
 
 ```bash
 python -m bin.main train --model Transformer --model_dir $MODEL/en-vi.model --config $CONFIG/en_vi.yml
 ```
 
 **Note**:
-Ở đây:
-- $MODEL là dường dẫn tới vị trí lưu mô hình. Sau khi huấn luyện mô hình, thư mục chứa mô hình bao gồm mô hình huyến luyện, file config, file log, vocab.
-- $CONFIG là đường dẫn tới vị trí chứa file config
+Where:
 
-## Bước 3: Dịch 
+- $MODEL is the path that saves the model. After the trained model, the directory contains models, file config, file
+  log, and vocabulary.
+- $CONFIG is the path containing the config file.
 
-Mô hình dịch dựa trên thuật toán beam search và lưu bản dịch tại `$your_data_path/translate.en2vi.vi`.
+## Step 3: Inference
+
+The beam search algorithm is utilized during inference, and the translated file is saved
+at `$your_data_path/translate.en2vi.vi`.
 
 ```bash
 python -m bin.main infer --model Transformer --model_dir $MODEL/en-vi.model --features_file $your_data_path/tst2012.en --predictions_file $your_data_path/translate.en2vi.vi
 ```
 
-## Bước 4: Đánh giá chất lượng dựa trên điểm BLEU
+## Step 4: Evaluation BLEU score
 
-Đánh giá điểm BLEU dựa trên multi-bleu
+Multi-bleu BLEU is utilized to evaluate quality.
 
 ```bash
 perl thrid-party/multi-bleu.perl $your_data_path/translate.en2vi.vi < $your_data_path/tst2012.vi
 ```
 
-|        MODEL       | BLEU (Beam Search) |
-| :-----------------:| :----------------: |
-| Transformer (Base) |        25.64       |
+|       MODEL        | BLEU (Beam Search) |
+|:------------------:|:------------------:|
+| Transformer (Base) |       25.64        |
 
+## The details refer to
 
-## Chi tiết tham khảo tại 
 [nmtuet.ddns.net](http://nmtuet.ddns.net:1190/)
 
-## Nếu có ý kiến đóng góp, xin hãy gửi thư tới địa chỉ mail kcdichdangu@gmail.com
+## If you have any feedback, please send to mail kcdichdangu@gmail.com
 
-## Xin trích dẫn bài báo sau:
+## Citations:
+
 ```bash
 @inproceedings{ViNMT2022,
   title = {ViNMT: Neural Machine Translation Toolkit},
