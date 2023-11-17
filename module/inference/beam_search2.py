@@ -1,9 +1,7 @@
 import torch
 import torch.nn.functional as functional
 
-import config.constants as const
 from module.inference.beam_search import BeamSearch
-from utils.data import generate_language_token
 
 
 def generate_subsequent_mask(sz, device):
@@ -26,26 +24,26 @@ class BeamSearch2(BeamSearch):
 		return [self.TRG.vocab.itos[j] for j in sent_id[1: t]]
 
 	@torch.no_grad()
-	def beam_search(self, src, src_lang=None, trg_lang=None, src_tokens=None, n_best=1, debug=False):
+	def beam_search(self, batch, src_tokens=None, n_best=1, debug=False):
 		"""
 		Beam search select k words with the highest conditional probability
 		 to be the first word of the k candidate output sequences.
 		Args:
-			src: The batch of sentences, already in [batch_size, tokens] of int
+			batch: The batch of sentences, already in [batch_size, tokens] of int
 			src_tokens: src in str version, same size as above
 			n_best: number of usable values per beam loaded (Not implemented)
 			debug: if true, print some debug information during the search
 		Return:
-			An array of translated sentences, in list-of-tokens format. TODO convert [batch_size, n_best, tgt_len] instead of [batch_size, tgt_len]
+			An array of translated sentences, in list-of-tokens format.
+			TODO convert [batch_size, n_best, tgt_len] instead of [batch_size, tgt_len]
 		"""
 		# Create some local variable
 		src_field, trg_field = self.SRC, self.TRG
-		sos_token = generate_language_token(trg_lang) if trg_lang is not None else const.DEFAULT_SOS
-		init_token = trg_field.vocab.stoi[sos_token]
-		eos_token_id = trg_field.vocab.stoi[const.DEFAULT_EOS]
-		src = src.to(self.device)
+		init_token = trg_field.vocab.stoi['<sos>']
+		eos_token_id = trg_field.vocab.stoi['<eos>']
+		batch = batch.to(self.device)
 
-		batch_size = src.size(0)
+		batch_size = batch.size(0)
 		model = self.model
 		k = self.beam_size
 		max_len = self.max_len
@@ -56,8 +54,8 @@ class BeamSearch2(BeamSearch):
 		trg[:, :, 0] = init_token
 
 		# Precalc output from model's encoder
-		single_src_mask = (src != src_field.vocab.stoi['<pad>']).unsqueeze(1).to(device)
-		e_out = model.encoder(src, single_src_mask)  # [batch_size x S x d_model]
+		single_src_mask = (batch != src_field.vocab.stoi['<pad>']).unsqueeze(1).to(device)
+		e_out = model.encoder(batch, single_src_mask)  # [batch_size x S x d_model]
 
 		# Output model prob
 		trg_mask = generate_subsequent_mask(1, device=device)

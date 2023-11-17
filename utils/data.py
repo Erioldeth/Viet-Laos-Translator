@@ -10,7 +10,3 @@ def get_synonym(word, SRC):
 				return SRC.vocab.stoi[l.name()]
 
 	return 0
-
-
-def generate_language_token(lang: str):
-	return f'<{lang.strip()}>'

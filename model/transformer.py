@@ -4,6 +4,7 @@ import time
 import numpy as np
 import torch
 import torch.nn as nn
+from torchtext.data import Field
 
 import utils.save as saver
 from config import *
@@ -11,39 +12,39 @@ from module.inference import strategies
 from module.layer import *
 from module.loader import Loader
 from module.optim import optimizers, ScheduledOptim
-from utils.decode_old import create_masks, translate_sentence
+from utils.decode_old import create_masks
+from utils.logger import init_logger
 from utils.loss import LabelSmoothingLoss
 from utils.metric import bleu_batch_iter
 
 
 class Transformer(nn.Module):
-	"""
-	Implementation of Transformer architecture based on the paper `Attention is all you need`.
-	Source: https://arxiv.org/abs/1706.03762
-	"""
 
-	def __init__(self, mode, model_dir, config):
+	def __init__(self, mode, model_dir, config_path):
 		super().__init__()
 
 		assert mode in ['train', 'infer'], f'Unknown mode: {mode}'
-		assert model_dir is not None and config is not None, 'Missing model_dir and config'
+		assert model_dir is not None and config_path is not None, 'Missing model_dir and config_path'
 
-		opt = self.config = Config(config)
-		self.device = opt.get('device', const.DEFAULT_DEVICE)
-
-		assert 'data' in opt, 'No data in config'
-		assert 'train_data_location' in opt['data'], 'No training data in config'
-		assert 'eval_data_location' in opt['data'], 'No evaluation data in config'
+		opt = self.config = Config(config_path)
+		self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 		data_opt = opt['data']
 		self.loader = Loader(train_path=data_opt['train_data_location'],
-		                     eval_path=data_opt['eval_data_location'],
+		                     valid_path=data_opt['valid_data_location'],
 		                     lang_tuple=(data_opt['src_lang'], data_opt['trg_lang']),
 		                     option=opt)
 
-		# input fields
-		# TODO: improve this step
-		self.SRC, self.TRG = self.loader.build_field(lower=opt.get('lowercase', const.DEFAULT_LOWERCASE))
+		# TODO: improve (Lao is (sentence/phrase)-delimited | Vietnamese is syllable-delimited)
+		src_kwargs = {}
+		trg_kwargs = {}
+		field_kwargs = {
+			'init_token': '<sos>',
+			'eos_token': '<eos>',
+			'lower': True,
+			'batch_first': True
+		}
+		self.fields = self.SRC, self.TRG = Field(**src_kwargs, **field_kwargs), Field(**trg_kwargs, **field_kwargs)
 
 		# initialize dataset and by proxy the vocabulary
 		match mode:
@@ -61,22 +62,39 @@ class Transformer(nn.Module):
 		d_model, N, heads, dropout = opt['d_model'], opt['n_layers'], opt['heads'], opt['dropout']
 		# get the maximum amount of tokens per sample in encoder.
 		# This is useful due to PositionalEncoder requiring this value
-		train_ignore_length = self.config.get('train_max_length', const.DEFAULT_TRAIN_MAX_LENGTH)
-		input_max_length = self.config.get('input_max_length', const.DEFAULT_INPUT_MAX_LENGTH)
-		infer_max_length = self.config.get('max_length', const.DEFAULT_MAX_LENGTH)
+		train_ignore_length = self.config['train_max_length']
+		input_max_length = self.config['input_max_length']
+		infer_max_length = self.config['max_length']
 		encoder_max_length = max(input_max_length, train_ignore_length)
 		decoder_max_length = max(infer_max_length, train_ignore_length)
-		self.encoder = Encoder(src_vocab_size, d_model, N, heads, dropout, max_seq_length=encoder_max_length)
-		self.decoder = Decoder(trg_vocab_size, d_model, N, heads, dropout, max_seq_length=decoder_max_length)
+		self.encoder = Encoder(src_vocab_size, d_model, N, heads, dropout, encoder_max_length)
+		self.decoder = Decoder(trg_vocab_size, d_model, N, heads, dropout, decoder_max_length)
 		self.out = nn.Linear(d_model, trg_vocab_size)
 
 		# load the beamsearch obj with preset values read from config.
 		# ALWAYS require the current model, max_length, and device used as per DecodeStrategy base
-		decode_strategy_cls = strategies[opt.get('decode_strategy', const.DEFAULT_DECODE_STRATEGY)]
-		decode_strategy_kwargs = opt.get('decode_strategy_kwargs', const.DEFAULT_STRATEGY_KWARGS)
+		decode_strategy_cls = strategies[opt['decode_strategy']]
+		decode_strategy_kwargs = opt['decode_strategy_kwargs']
 		self.decode_strategy = decode_strategy_cls(self, infer_max_length, self.device, **decode_strategy_kwargs)
 
 		self.to(self.device)
+
+	def forward(self, src, trg, src_mask, trg_mask, output_attention=False):
+		"""Run a full model with specified source-target batched set of data
+		Args:
+			src: the source input [batch_size, src_len]
+			trg: the target input (& expected output) [batch_size, trg len]
+			src_mask: the padding mask for src [batch_size, 1, src_len]
+			trg_mask: the triangle mask for trg [batch_size, trg_len, trg_len]
+			output_attention: if specified, output the attention as needed
+		Returns:
+			the logits (unsoftmaxed outputs), same shape as trg
+		"""
+		e_outputs = self.encoder(src, src_mask)
+		d_output, attn = self.decoder(trg, e_outputs, src_mask, trg_mask, output_attention=True)
+		output = self.out(d_output)
+
+		return output, attn if output_attention else output
 
 	def load_checkpoint(self, model_dir, checkpoint=None, checkpoint_idx=0):
 		"""
@@ -107,23 +125,6 @@ class Transformer(nn.Module):
 				# train the model from begin
 				checkpoint_idx = -1
 			self._checkpoint_idx = checkpoint_idx
-
-	def forward(self, src, trg, src_mask, trg_mask, output_attention=False):
-		"""Run a full model with specified source-target batched set of data
-		Args:
-			src: the source input [batch_size, src_len]
-			trg: the target input (& expected output) [batch_size, trg len]
-			src_mask: the padding mask for src [batch_size, 1, src_len]
-			trg_mask: the triangle mask for trg [batch_size, trg_len, trg_len]
-			output_attention: if specified, output the attention as needed
-		Returns:
-			the logits (unsoftmaxed outputs), same shape as trg
-		"""
-		e_outputs = self.encoder(src, src_mask)
-		d_output, attn = self.decoder(trg, e_outputs, src_mask, trg_mask, output_attention=True)
-		output = self.out(d_output)
-
-		return output, attn if output_attention else output
 
 	def train_step(self, optimizer, batch, criterion):
 		"""
@@ -194,73 +195,10 @@ class Transformer(nn.Module):
 		avg_loss = np.mean(total_loss)
 		return avg_loss
 
-	def translate_sentence(self, sentence, device=None, k=None, max_len=None, debug=False):
-		"""
-		Receive a sentence string and output the prediction generated from the model.
-		NOTE: sentence input is a list of tokens instead of string due to change in loader. See the current DefaultLoader for further details
-		"""
-		self.eval()
-		if device is None:
-			device = self.device
-		if k is None:
-			k = self.config.get('k', const.DEFAULT_K)
-		if max_len is None:
-			max_len = self.config.get('max_length', const.DEFAULT_MAX_LENGTH)
-
-		# Get output from decode
-		translated_tokens = translate_sentence(sentence, self, self.SRC, self.TRG, device, k, max_len, debug=debug,
-		                                       output_list_of_tokens=True)
-
-		return translated_tokens
-
-	def translate_batch_sentence(self, sentences, trg_lang=None, output_tokens=False, batch_size=None):
-		"""Translate sentences by splitting them to batches and process them simultaneously
-		Args:
-			sentences: the sentences in a list. Must NOT have been tokenized (due to SRC preprocess)
-			output_tokens: if set, do not detokenize the output
-			batch_size: if specified, use the value; else use config ones
-		Returns:
-			a matching translated sentences list in [detokenized format using loader.detokenize | list of tokens]
-		"""
-		if batch_size is None:
-			batch_size = self.config.get('eval_batch_size', const.DEFAULT_EVAL_BATCH_SIZE)
-		input_max_length = self.config.get('input_max_length', const.DEFAULT_INPUT_MAX_LENGTH)
-		self.eval()
-
-		translated = []
-		for b_idx in range(0, len(sentences), batch_size):
-			batch = sentences[b_idx: b_idx + batch_size]
-
-			trans_batch = self.translate_batch(batch, trg_lang=trg_lang, output_tokens=output_tokens,
-			                                   input_max_length=input_max_length)
-
-			translated.extend(trans_batch)
-		# for line in trans_batch:
-		# 	print(line)
-		return translated
-
-	def translate_batch(self, batch_sentences, trg_lang=None, output_tokens=False, input_max_length=None):
-		"""Translate a single batch of sentences. Split to aid serving
-		Args:
-			sentences: the sentences in a list. Must NOT have been tokenized (due to SRC preprocess)
-			src_lang/trg_lang: the language from src->trg. Used for multilingual model only.
-			output_tokens: if set, do not detokenize the output
-		Returns:
-			a matching translated sentences list in [detokenized format using loader.detokenize | list of tokens]
-		"""
-		if input_max_length is None:
-			input_max_length = self.config.get('input_max_length', const.DEFAULT_INPUT_MAX_LENGTH)
-		translated_batch = self.decode_strategy.translate_batch(batch_sentences,
-		                                                        trg_lang=trg_lang,
-		                                                        src_size_limit=input_max_length,
-		                                                        output_tokens=True,
-		                                                        debug=False)
-		return self.loader.detokenize(translated_batch) if not output_tokens else translated_batch
-
-	def run_train(self, model_dir=None):
+	def run_train(self, model_dir):
 		opt = self.config
-		from utils.logger import init_logger
-		logging = init_logger(model_dir, opt.get('log_file_models'))
+
+		logging = init_logger(model_dir, opt['log_file_models'])
 
 		trg_pad = self.TRG.vocab.stoi['<pad>']
 		# load model into specific device (GPU/CPU) memory
@@ -286,7 +224,7 @@ class Transformer(nn.Module):
 		lr = opt['lr']
 		d_model = opt['d_model']
 		n_warmup_steps = opt['n_warmup_steps']
-		optimizer_params = opt.get('optimizer_params', {})
+		optimizer_params = opt['optimizer_params']
 
 		assert optim_algo in optimizers, f'Unknown optimizer: {optim_algo}'
 
@@ -338,21 +276,18 @@ class Transformer(nn.Module):
 				                           maximum_length=(self.encoder._max_seq_length, self.decoder._max_seq_length))
 
 				if (epoch + 1) % opt['save_checkpoint_epochs'] == 0 and model_dir is not None:
-					valid_src_lang, valid_trg_lang = self.loader.lang_tuple
-					bleuscore = bleu_batch_iter(self, self.valid_iter, src_lang=valid_src_lang, trg_lang=valid_trg_lang)
+					# valid_src_lang, valid_trg_lang = self.loader.lang_tuple
+					bleuscore = bleu_batch_iter(self, self.valid_iter)
 
-					saver.save_and_clear_model(model,
-					                           model_dir,
+					saver.save_and_clear_model(model, model_dir,
 					                           checkpoint_idx=epoch + 1,
-					                           maximum_saved_model=opt.get('maximum_saved_model_train',
-					                                                       const.DEFAULT_NUM_KEEP_MODEL_TRAIN))
+					                           maximum_saved_model=opt['maximum_saved_model_train'])
 					# keep the best model per every bleu calculation
 					best_model_score = saver.save_best_model(model,
 					                                         model_dir,
 					                                         best_model_score,
 					                                         bleuscore,
-					                                         maximum_saved_model=opt.get('maximum_saved_model_eval',
-					                                                                     const.DEFAULT_NUM_KEEP_MODEL_TRAIN))
+					                                         maximum_saved_model=opt['maximum_saved_model_eval'])
 					logging.info(
 						f'epoch: {epoch:03d} - '
 						f'iter: {i:05d} - '
@@ -368,30 +303,40 @@ class Transformer(nn.Module):
 						f'valid loss: {valid_loss:.4f} - '
 						f'validation time: {time.time() - s:.4f}')
 
-	def run_infer(self, features_file, predictions_file, src_lang=None, trg_lang=None, batch_size=None):
-		opt = self.config
+	def transl_batch(self, batch: list[str], input_max_length):
+		"""Translate a single batch of sentences. Split to aid serving"""
+		translated_batch = self.decode_strategy.transl_batch(batch, src_size_limit=input_max_length, output_tokens=True)
+		return self.loader.detokenize(translated_batch)
+
+	def transl_sentences(self, sentences: list[str], batch_size):
+		"""Translate sentences by splitting them to batches and process them simultaneously"""
+		self.eval()
+
+		input_max_length = self.config['input_max_length']
+
+		batches = [sentences[i: i + batch_size] for i in range(0, len(sentences), batch_size)]
+		return [self.transl_batch(batch, input_max_length) for batch in batches]
+
+	def run_infer(self, features_file, predictions_file):
 		# load model into specific device (GPU/CPU) memory
-		model = self.to(self.device)
+		self.to(self.device)
 
 		# Read inference file
-		print('Reading features file from {}...'.format(features_file))
-		with io.open(features_file, 'r', encoding='utf-8') as read_file:
-			inputs = [l.strip() for l in read_file.readlines()]
+		print(f'Reading features file from {features_file}...')
+		with io.open(features_file, 'r', encoding='utf-8') as file:
+			inputs = [line.strip() for line in file.readlines()]
+		batch_size = self.config['valid_batch_size']
 
 		print('Performing inference ...')
-		# Append each translated sentence line by line
-		#        results = '\n'.join([model.loader.detokenize(model.translate_sentence(sentence)) for sentence in inputs])
 		# Translate by batched versions
 		start = time.time()
-		results = '\n'.join(
-			self.translate_batch_sentence(inputs, src_lang=src_lang, trg_lang=trg_lang, output_tokens=False,
-			                              batch_size=batch_size))
+		results = '\n'.join(self.transl_sentences(inputs, batch_size))
 		print(f'Inference done, cost {time.time() - start:.2f} secs.')
 
 		# Write results to system file
 		print(f'Writing results to {predictions_file} ...')
-		with io.open(predictions_file, 'w', encoding='utf-8') as write_file:
-			write_file.write(results)
+		with io.open(predictions_file, 'w', encoding='utf-8') as file:
+			file.write(results)
 
 		print('All done!')
 
@@ -405,7 +350,3 @@ class Transformer(nn.Module):
 	# TODO use this in inference fns as well
 	def to_logits(self, inputs):
 		return self.out(inputs)
-
-	@property
-	def fields(self):
-		return self.SRC, self.TRG
