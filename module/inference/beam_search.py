@@ -30,7 +30,7 @@ class BeamSearch(DecodeStrategy):
 		self._replace_unk = replace_unk
 		self._length_norm = length_normalize
 
-	def init_vars(self, src, start_token='<sos>'):
+	def init_vars(self, src):
 		"""
 		Calculate the required matrices during translation after the model is finished
 		Input:
@@ -42,7 +42,7 @@ class BeamSearch(DecodeStrategy):
 		batch_size = len(src)
 		row_b = self.beam_size * batch_size
 
-		init_tok = self.TRG.vocab.stoi[start_token]
+		init_tok = self.TRG.vocab.stoi['<sos>']
 		src_mask = (src != self.SRC.vocab.stoi['<pad>']).unsqueeze(-2).to(self.device)
 		src = src.to(self.device)
 
@@ -186,7 +186,7 @@ class BeamSearch(DecodeStrategy):
 		for i in range(2, self.max_len):
 			trg_mask = no_peeking_mask(i, self.device)
 
-			decoder_output, attn = model.decoder(outputs[:, :i], e_outputs, src_mask, trg_mask, output_attention=True)
+			decoder_output, attn = model.decoder(outputs[:, :i], e_outputs, src_mask, trg_mask)
 			out = model.out(decoder_output)
 			out = functional.softmax(out, dim=-1)
 			outputs, log_scores = self.compute_k_best(outputs, out, log_scores, i)

@@ -35,7 +35,7 @@ class Transformer(nn.Module):
 		                     lang_tuple=(data_opt['src_lang'], data_opt['trg_lang']),
 		                     option=opt)
 
-		# TODO: improve (Lao is (sentence/phrase)-delimited | Vietnamese is syllable-delimited)
+		# TODO: improve preprocessing
 		src_kwargs = {}
 		trg_kwargs = {}
 		field_kwargs = {
@@ -46,55 +46,41 @@ class Transformer(nn.Module):
 		}
 		self.fields = self.SRC, self.TRG = Field(**src_kwargs, **field_kwargs), Field(**trg_kwargs, **field_kwargs)
 
-		# initialize dataset and by proxy the vocabulary
 		match mode:
 			case 'train':
-				# training flow, necessitate the DataLoader and iterations.
-				# This will attempt to load vocab file from the dir instead of rebuilding,
-				# but can build a new vocab if no data is found
-				self.train_iter, self.valid_iter = self.loader.create_iterator(self.fields, model_dir)
+				self.train_iter, self.valid_iter = self.loader.create_iterator(self.fields, model_dir, self.device)
 			case 'infer':
-				# inference, require model and vocab in the path
 				self.loader.build_vocab(self.fields, model_dir)
 
-		# define the model
 		src_vocab_size, trg_vocab_size = len(self.SRC.vocab), len(self.TRG.vocab)
 		d_model, N, heads, dropout = opt['d_model'], opt['n_layers'], opt['heads'], opt['dropout']
-		# get the maximum amount of tokens per sample in encoder.
-		# This is useful due to PositionalEncoder requiring this value
-		train_ignore_length = self.config['train_max_length']
-		input_max_length = self.config['input_max_length']
-		infer_max_length = self.config['max_length']
-		encoder_max_length = max(input_max_length, train_ignore_length)
-		decoder_max_length = max(infer_max_length, train_ignore_length)
-		self.encoder = Encoder(src_vocab_size, d_model, N, heads, dropout, encoder_max_length)
-		self.decoder = Decoder(trg_vocab_size, d_model, N, heads, dropout, decoder_max_length)
+
+		train_ignore_len = opt['train_max_length']
+		input_max_len = opt['input_max_length']
+		infer_max_len = opt['max_length']
+		encoder_max_len = max(input_max_len, train_ignore_len)
+		decoder_max_len = max(infer_max_len, train_ignore_len)
+
+		self.encoder = Encoder(src_vocab_size, d_model, N, heads, dropout, encoder_max_len)
+		self.decoder = Decoder(trg_vocab_size, d_model, N, heads, dropout, decoder_max_len)
+
 		self.out = nn.Linear(d_model, trg_vocab_size)
 
 		# load the beamsearch obj with preset values read from config.
 		# ALWAYS require the current model, max_length, and device used as per DecodeStrategy base
 		decode_strategy_cls = strategies[opt['decode_strategy']]
 		decode_strategy_kwargs = opt['decode_strategy_kwargs']
-		self.decode_strategy = decode_strategy_cls(self, infer_max_length, self.device, **decode_strategy_kwargs)
+		self.decode_strategy = decode_strategy_cls(self, infer_max_len, self.device, **decode_strategy_kwargs)
 
 		self.to(self.device)
 
-	def forward(self, src, trg, src_mask, trg_mask, output_attention=False):
-		"""Run a full model with specified source-target batched set of data
-		Args:
-			src: the source input [batch_size, src_len]
-			trg: the target input (& expected output) [batch_size, trg len]
-			src_mask: the padding mask for src [batch_size, 1, src_len]
-			trg_mask: the triangle mask for trg [batch_size, trg_len, trg_len]
-			output_attention: if specified, output the attention as needed
-		Returns:
-			the logits (unsoftmaxed outputs), same shape as trg
-		"""
+	def forward(self, src, trg, src_mask, trg_mask):
+
 		e_outputs = self.encoder(src, src_mask)
-		d_output, attn = self.decoder(trg, e_outputs, src_mask, trg_mask, output_attention=True)
+		d_output, attn = self.decoder(trg, e_outputs, src_mask, trg_mask)
 		output = self.out(d_output)
 
-		return output, attn if output_attention else output
+		return output, attn
 
 	def load_checkpoint(self, model_dir, checkpoint=None, checkpoint_idx=0):
 		"""
@@ -201,10 +187,11 @@ class Transformer(nn.Module):
 		logging = init_logger(model_dir, opt['log_file_models'])
 
 		trg_pad = self.TRG.vocab.stoi['<pad>']
-		# load model into specific device (GPU/CPU) memory
+
 		logging.info(f'{self.loader._lang_tuple[0]} * src vocab size = {len(self.SRC.vocab)}')
 		logging.info(f'{self.loader._lang_tuple[1]} * trg vocab size = {len(self.TRG.vocab)}')
 		logging.info('Building model...')
+
 		model = self.to(self.device)
 
 		checkpoint_idx = self._checkpoint_idx

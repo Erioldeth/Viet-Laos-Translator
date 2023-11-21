@@ -16,10 +16,6 @@ def no_peeking_mask(size, device):
 
 
 def create_masks(src, trg, src_pad, trg_pad, device):
-	"""
-	Tạo mask cho encoder,
-	để mô hình không bỏ qua thông tin của các kí tự PAD do chúng ta thêm vào
-	"""
 	src_mask = (src != src_pad).unsqueeze(-2)
 
 	if trg is not None:

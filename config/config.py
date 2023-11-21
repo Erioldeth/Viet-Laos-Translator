@@ -14,7 +14,6 @@ def get_configs(path):
 
 class MonoConfig(dict):
 	def __init__(self, path, **elements):
-		"""Initiate a config object, where specified elements override the default config loaded"""
 		super(MonoConfig, self).__init__(self._load(path))
 		self.update(**elements)
 
@@ -32,7 +31,6 @@ class MonoConfig(dict):
 
 class MultiConfig(MonoConfig):
 	def _load(self, paths):
-		"""Update to support multiple paths."""
 		super_cls = super(MultiConfig, self)
 
 		if isinstance(paths, list):
@@ -45,7 +43,6 @@ class MultiConfig(MonoConfig):
 			return super_cls._load(paths)
 
 	def _update(self, orig, new):
-		"""Instead of overriding dicts, merge them recursively."""
 		for k, v in new.items():
 			if k in orig and isinstance(orig[k], dict):
 				assert isinstance(v, dict), f'Mismatching config with key {k}: {orig[k]} - {v}'
