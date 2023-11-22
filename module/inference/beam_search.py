@@ -9,7 +9,13 @@ from torch.autograd import Variable
 from torch.nn.utils.rnn import pad_sequence
 
 from module.inference.decode_strategy import DecodeStrategy
-from utils.misc import no_peeking_mask
+
+
+def no_peeking_mask(size, device):
+	"""
+	Creating a mask for decoder that future words cannot be seen at prediction during training.
+	"""
+	return torch.tril(torch.ones((size, size), device=device)).bool()
 
 
 class BeamSearch(DecodeStrategy):

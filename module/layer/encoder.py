@@ -21,14 +21,19 @@ class Encoder(nn.Module):
 		self._max_seq_length = max_len
 
 	def forward(self, src, src_mask):
+		# src = [batch_size, src_len]
+		# src_mask = [batch_size, 1, 1, src_len]
 		bs, src_len = src.shape
 
 		pos = torch.arange(0, src_len).unsqueeze(0).repeat(bs, 1)
+		# pos = [batch_size, src_len]
 
 		x = self.dropout(self.tok_embed(src) * math.sqrt(self.d_model) + self.pos_embed(pos))
+		# x = [batch_size, src_len, d_model]
 
 		for layer in self.layers:
 			x = layer(x, src_mask)
+		# x = [batch_size, src_len, d_model]
 
 		return x
 
@@ -46,12 +51,17 @@ class EncoderLayer(nn.Module):
 		self.dropout = nn.Dropout(dropout)
 
 	def forward(self, src, src_mask):
+		# src = [batch_size, src_len, d_model]
+		# src_mask = [batch_size, 1, 1, src_len]
+
 		src_sa, _ = self.attn(src, src, src, src_mask)
 
 		src = self.sa_norm(src + self.dropout(src_sa))
+		# src = [batch_size, src_len, d_model]
 
 		src_ff = self.ff(src)
 
 		src = self.ff_norm(src + self.dropout(src_ff))
+		# src = [batch_size, src_len, d_model]
 
 		return src

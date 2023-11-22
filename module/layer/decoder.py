@@ -7,12 +7,11 @@ from module.sublayer import *
 
 
 class Decoder(nn.Module):
-	def __init__(self, vocab_size, d_model, N, heads, dropout, max_seq_length=200):
+	def __init__(self, vocab_size, d_model, N, heads, dropout, max_len=200):
 		super().__init__()
-		self.N = N
 
 		self.tok_embed = nn.Embedding(vocab_size, d_model)
-		self.pos_embed = nn.Embedding(max_seq_length, d_model)
+		self.pos_embed = nn.Embedding(max_len, d_model)
 
 		self.layers = nn.ModuleList([DecoderLayer(d_model, heads, dropout) for _ in range(N)])
 
@@ -21,19 +20,30 @@ class Decoder(nn.Module):
 		self.dropout = nn.Dropout(dropout)
 
 		# TODO: check use of this
-		self._max_seq_length = max_seq_length
+		self._max_seq_length = max_len
 
 	def forward(self, trg, memory, src_mask, trg_mask):
+		# src = [batch_size, src_len]
+		# memory = [batch_size, src_len, d_model]
+		# src_mask = [batch_size, 1, 1, src_len]
+		# trg_mask = [batch_size, 1, trg_len, trg_len]
 		bs, trg_len = trg.shape
 
 		pos = torch.arange(0, trg_len).unsqueeze(0).repeat(bs, 1)
+		# pos = [batch_size, trg_len]
 
 		x = self.dropout(self.tok_embed(trg) * math.sqrt(self.d_model) + self.pos_embed(pos))
+		# x = [batch_size, trg_len, d_model]
 
 		for layer in self.layers:
 			x, attn = layer(x, memory, src_mask, trg_mask)
+		# x = [batch_size, trg_len, d_model]
+		# attn = [batch_size, heads, trg_len, src_len]
 
-		return self.out(x), attn
+		x = self.out(x)
+		# x = [batch_size, trg_len, vocab_size]
+
+		return x, attn
 
 
 class DecoderLayer(nn.Module):
@@ -51,16 +61,24 @@ class DecoderLayer(nn.Module):
 		self.dropout = nn.Dropout(dropout)
 
 	def forward(self, trg, memory, src_mask, trg_mask):
+		# src = [batch_size, src_len]
+		# memory = [batch_size, src_len, d_model]
+		# src_mask = [batch_size, 1, 1, src_len]
+		# trg_mask = [batch_size, 1, trg_len, trg_len]
 		trg_sa, _ = self.self_attn(trg, trg, trg, trg_mask)
 
 		trg = self.sa_norm(trg + self.dropout(trg_sa))
+		# trg = [batch_size, trg_len, d_model]
 
 		trg_ea, attn = self.enc_attn(trg, memory, memory, src_mask)
 
 		trg = self.enc_norm(trg + self.dropout(trg_ea))
+		# trg = [batch_size, trg_len, d_model]
 
 		trg_ff = self.ff(trg)
 
 		trg = self.ff_norm(trg + self.dropout(trg_ff))
+		# trg = [batch_size, trg_len, d_model]
+		# attn = [batch_size, heads, trg_len, src_len]
 
 		return trg, attn

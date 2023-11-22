@@ -1,8 +1,7 @@
 import torch
+from nltk.corpus import wordnet
 from torch.autograd import Variable
 from torch.nn.utils.rnn import pad_sequence
-
-from utils.data import get_synonym
 
 
 class DecodeStrategy(object):
@@ -48,3 +47,13 @@ class DecodeStrategy(object):
 		return self.SRC.vocab.stoi[tok] \
 			if self.SRC.vocab.stoi[tok] != self.SRC.vocab.stoi['<eos>'] \
 			else get_synonym(tok, self.SRC)
+
+
+def get_synonym(word, SRC):
+	syns = wordnet.synsets(word)
+	for s in syns:
+		for l in s.lemmas():
+			if SRC.vocab.stoi[l.name()] != 0:
+				return SRC.vocab.stoi[l.name()]
+
+	return 0

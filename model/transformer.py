@@ -12,7 +12,6 @@ from module.inference import strategies
 from module.layer import *
 from module.loader import Loader
 from module.optim import optimizers, ScheduledOptim
-from utils.decode_old import create_masks
 from utils.logger import init_logger
 from utils.loss import LabelSmoothingLoss
 from utils.metric import bleu_batch_iter
@@ -52,9 +51,11 @@ class Transformer(nn.Module):
 			case 'infer':
 				self.loader.build_vocab(self.fields, model_dir)
 
+		self.src_pad_idx = self.SRC.vocab.stoi['<pad>']
+		self.trg_pad_idx = self.TRG.vocab.stoi['<pad>']
+
 		src_vocab_size, trg_vocab_size = len(self.SRC.vocab), len(self.TRG.vocab)
 		d_model, N, heads, dropout = opt['d_model'], opt['n_layers'], opt['heads'], opt['dropout']
-
 		train_ignore_len = opt['train_max_length']
 		input_max_len = opt['input_max_length']
 		infer_max_len = opt['max_length']
@@ -66,8 +67,6 @@ class Transformer(nn.Module):
 
 		self.out = nn.Linear(d_model, trg_vocab_size)
 
-		# load the beamsearch obj with preset values read from config.
-		# ALWAYS require the current model, max_length, and device used as per DecodeStrategy base
 		decode_strategy_cls = strategies[opt['decode_strategy']]
 		decode_strategy_kwargs = opt['decode_strategy_kwargs']
 		self.decode_strategy = decode_strategy_cls(self, infer_max_len, self.device, **decode_strategy_kwargs)
@@ -75,9 +74,11 @@ class Transformer(nn.Module):
 		self.to(self.device)
 
 	def forward(self, src, trg, src_mask, trg_mask):
+		# src = [batch size, src len]
+		# trg = [batch size, trg len]
 
-		e_outputs = self.encoder(src, src_mask)
-		d_output, attn = self.decoder(trg, e_outputs, src_mask, trg_mask)
+		e_output = self.encoder(src, src_mask)
+		d_output, attn = self.decoder(trg, e_output, src_mask, trg_mask)
 		output = self.out(d_output)
 
 		return output, attn
@@ -112,10 +113,24 @@ class Transformer(nn.Module):
 				checkpoint_idx = -1
 			self._checkpoint_idx = checkpoint_idx
 
+	def make_masks(self, src, trg):
+		# src = [batch_size, src_len]
+		# trg = [batch_size, trg_len]
+
+		src_mask = (src != self.src_pad_idx)[:, None, None]
+		# src_mask = [batch_size, 1, 1, src_len]
+
+		trg_pad_mask = (trg != self.trg_pad_idx)[:, None, None]
+		# trg_pad_mask = [batch_size, 1, 1, trg_len]
+		trg_len = trg.shape[1]
+		trg_sub_mask = torch.tril(torch.ones((trg_len, trg_len), device=self.device)).bool()
+		# trg_sub_mask = [trg_len, trg_len]
+		trg_mask = trg_pad_mask & trg_sub_mask
+		# trg_mask = [batch_size, 1, trg_len, trg_len]
+
+		return src_mask, trg_mask
+
 	def train_step(self, optimizer, batch, criterion):
-		"""
-		Perform one training step.
-		"""
 		self.train()
 
 		# move data to specific device's memory
@@ -123,12 +138,10 @@ class Transformer(nn.Module):
 		trg = batch.trg.transpose(0, 1).to(self.device)
 
 		trg_input = trg[:, :-1]
-		src_pad = self.SRC.vocab.stoi['<pad>']
-		trg_pad = self.TRG.vocab.stoi['<pad>']
 		ys = trg[:, 1:].contiguous().view(-1)
 
 		# create mask and perform network forward
-		src_mask, trg_mask = create_masks(src, trg_input, src_pad, trg_pad, self.device)
+		src_mask, trg_mask = self.make_masks(src, trg_input)
 		preds = self(src, trg_input, src_mask, trg_mask)
 
 		# perform backprogation
@@ -154,9 +167,6 @@ class Transformer(nn.Module):
 		"""
 		self.eval()
 
-		src_pad = self.SRC.vocab.stoi['<pad>']
-		trg_pad = self.TRG.vocab.stoi['<pad>']
-
 		with torch.no_grad():
 			total_loss = []
 			for batch in valid_iter:
@@ -170,7 +180,7 @@ class Transformer(nn.Module):
 				ys = trg[:, 1:].contiguous().view(-1)
 
 				# create mask and perform network forward
-				src_mask, trg_mask = create_masks(src, trg_input, src_pad, trg_pad, self.device)
+				src_mask, trg_mask = self.make_masks(src, trg_input)
 				preds = self(src, trg_input, src_mask, trg_mask)
 
 				# compute loss on current batch
