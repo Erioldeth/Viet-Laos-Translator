@@ -12,15 +12,6 @@ class Loader:
 		self.lang_tuple = lang_tuple
 		self.option = option
 
-	def detokenize(self, tokens_list):
-		"""Differentiate between [batch, len] and [len]; joining tokens back to strings"""
-		if not tokens_list or isinstance(tokens_list[0], str):
-			# [len], single sentence version
-			return ' '.join(tokens_list)
-		else:
-			# [batch, len], batch sentence version
-			return [' '.join(tokens) for tokens in tokens_list]
-
 	def build_vocab(self, fields: tuple[Field, Field], model_dir, data=None, **kwargs):
 		if not load_vocab(model_dir, self.lang_tuple, fields):
 			assert data is not None, 'No data to build vocab from'

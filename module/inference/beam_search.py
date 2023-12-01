@@ -5,7 +5,6 @@ import operator
 import numpy as np
 import torch
 import torch.nn.functional as functional
-from torch.autograd import Variable
 from torch.nn.utils.rnn import pad_sequence
 
 
@@ -158,20 +157,18 @@ class BeamSearch:
 		# reshape back to outputs shape [batch, beam] of list
 		return replaced.reshape(outputs.shape)
 
-	def beam_search(self, batch, src_tokens=None, n_best=1, length_norm=None, replace_unk=None, debug=False):
+	def beam_search(self, batch, src_tokens=None, n_best=1, length_norm=None, replace_unk=None):
 		"""
 		Beam search select k words with the highest conditional probability to be the first word
 		of the k candidate output sequences.
 		Args:
 			batch: The batch of sentences, already in [batch_size, tokens] of int
-			src_tokens: src in str version, same size as above.
-			Used almost exclusively for replace unknown word
+			src_tokens: src in str version, same size as above. Used almost exclusively for replace unknown word
 			n_best: number of usable values per beam loaded
 			length_norm: if specified, normalize as per (Wu, 2016);
 			note that if not inputted then it will still use __init__ value as default. float
 			replace_unk: if specified, do replace unknown word using attention of (layer, head);
 			note that if not inputted, it will still use __init__ value as default. (int, int)
-			debug: if true, print some debug information during the search
 		Return:
 			An array of translated sentences, in list-of-tokens format.
 			Either [batch_size, n_best, tgt_len] when n_best > 1
@@ -251,12 +248,9 @@ class BeamSearch:
 
 		assert sent_ids is torch.Tensor, f'sent_ids is instead {type(sent_ids)}'
 
-		translated_sentences = self.beam_search(sent_ids, src_tokens=sent_tokens, replace_unk=replace_unk)
+		translated_batch = self.beam_search(sent_ids, sent_tokens, replace_unk=replace_unk)
 
-		if not output_tokens:
-			translated_sentences = [' '.join(tokens) for tokens in translated_sentences]
-
-		return translated_sentences
+		return translated_batch if output_tokens else [' '.join(token_list) for token_list in translated_batch]
 
 	def preprocess_batch(self, batch: list[str] | torch.Tensor,
 	                     src_size_limit=None, output_tokens=False, pad_token="<pad>"):
@@ -280,7 +274,7 @@ class BeamSearch:
 		# convert to tensors, in indices format
 		tokenized_sent = [torch.LongTensor([self.SRC.vocab.stoi[t] for t in s]) for s in processed_sent]
 		# padding sentences
-		batch = Variable(pad_sequence(tokenized_sent, True, self.SRC.vocab.stoi[pad_token]))
+		batch = pad_sequence(tokenized_sent, True, self.SRC.vocab.stoi[pad_token])
 
 		return batch, processed_sent if output_tokens else batch
 

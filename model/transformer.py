@@ -203,32 +203,24 @@ class Transformer(nn.Module):
 				best_valid_loss = valid_loss
 				save_model(self, model_dir)
 
-	def transl_batch(self, batch: list[str], input_max_length):
-		translated_batch = self.decode_strategy.transl_batch(batch, input_max_length, output_tokens=True)
-		return self.loader.detokenize(translated_batch)
-
-	def transl_sentences(self, sentences, batch_size):
-		self.eval()
-
-		input_max_length = self.config['input_max_length']
-
-		batches = [sentences[i: i + batch_size] for i in range(0, len(sentences), batch_size)]
-		return [translated_sentence
-		        for batch in batches
-		        for translated_sentence in self.transl_batch(batch, input_max_length)]
-
 	def run_infer(self, features_file, predictions_file):
 		self.to(self.device)
+
+		opt = self.config
+		batch_size = opt['valid_batch_size']
+		input_max_length = opt['input_max_length']
 
 		print(f'Reading features file from {features_file}...')
 		with io.open(features_file, 'r', encoding='utf-8') as file:
 			inputs = [line.strip() for line in file.readlines()]
 
 		print('Performing inference ...')
-
+		self.eval()
 		start = time.time()
 
-		results = '\n'.join(self.transl_sentences(inputs, self.config['valid_batch_size']))
+		results = '\n'.join([translated_sentence
+		                     for batch in [inputs[i: i + batch_size] for i in range(0, len(inputs), batch_size)]
+		                     for translated_sentence in self.decode_strategy.transl_batch(batch, input_max_length)])
 
 		elapsed_time = time.time() - start
 		print(f'Inference done, cost {elapsed_time // 60}m{elapsed_time % 60}s')
