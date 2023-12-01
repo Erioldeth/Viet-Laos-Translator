@@ -7,15 +7,15 @@ from module.sublayer import *
 
 
 class Decoder(nn.Module):
-	def __init__(self, vocab_size, d_model, N, heads, dropout, max_len=200):
+	def __init__(self, output_dim, d_model, N, heads, dropout, max_len=200):
 		super().__init__()
 
-		self.tok_embed = nn.Embedding(vocab_size, d_model)
+		self.tok_embed = nn.Embedding(output_dim, d_model)
 		self.pos_embed = nn.Embedding(max_len, d_model)
 
 		self.layers = nn.ModuleList([DecoderLayer(d_model, heads, dropout) for _ in range(N)])
 
-		self.out = nn.Linear(d_model, vocab_size)
+		self.out = nn.Linear(d_model, output_dim)
 
 		self.dropout = nn.Dropout(dropout)
 
@@ -41,7 +41,7 @@ class Decoder(nn.Module):
 		# attn = [batch_size, heads, trg_len, src_len]
 
 		x = self.out(x)
-		# x = [batch_size, trg_len, vocab_size]
+		# x = [batch_size, trg_len, output_dim]
 
 		return x, attn
 

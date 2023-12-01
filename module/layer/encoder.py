@@ -7,10 +7,10 @@ from module.sublayer import *
 
 
 class Encoder(nn.Module):
-	def __init__(self, vocab_size, d_model, N, heads, dropout, max_len=200):
+	def __init__(self, input_dim, d_model, N, heads, dropout, max_len=200):
 		super().__init__()
 
-		self.tok_embed = nn.Embedding(vocab_size, d_model)
+		self.tok_embed = nn.Embedding(input_dim, d_model)
 		self.pos_embed = nn.Embedding(max_len, d_model)
 
 		self.layers = nn.ModuleList([EncoderLayer(d_model, heads, dropout) for _ in range(N)])

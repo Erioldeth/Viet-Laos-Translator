@@ -15,10 +15,6 @@ heads: 8
 train_max_length: 50 # training samples with this much length in src/trg will be discarded
 train_batch_size: 64
 epochs: 20
-print_every: 200
-save_checkpoint_epochs: 1
-maximum_saved_model_eval: 5
-maximum_saved_model_train: 5
 # inference section
 valid_batch_size: 8
 decode_strategy: BeamSearch
@@ -31,8 +27,7 @@ decode_strategy_kwargs:
 input_max_length: 200 # input longer than this value will be trimmed in inference. Note that this values are to be used during cached PE, hence, validation set with more than this many tokens will call a warning for the trimming.
 max_length: 160 # only perform up to this much timestep during inference
 # optimizer and learning arguments section
-lr: 0.2
-optimizer: AdaBelief
+lr: !!float 1e-3
 optimizer_params:
   betas:
     - 0.9 # beta1

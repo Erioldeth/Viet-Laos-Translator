@@ -19,20 +19,6 @@ if __name__ == '__main__':
 	                    nargs='+',
 	                    default=None,
 	                    help='Location of the config file')
-	parser.add_argument('--no_keeping_config',
-	                    action='store_false',
-	                    help='If set, do not copy the config file to the model directory')
-	parser.add_argument('--checkpoint',
-	                    type=str,
-	                    default=None,
-	                    help='All mode: specify to load the checkpoint into model.')
-	parser.add_argument('--checkpoint_idx',
-	                    type=int,
-	                    default=0,
-	                    help='All mode: specify the epoch of the checkpoint loaded. '
-	                         'Only useful for training.')
-
-	# arguments for inference
 	parser.add_argument('--features_file',
 	                    type=str,
 	                    help='Inference mode: Provide the location of features file')
@@ -48,7 +34,7 @@ if __name__ == '__main__':
 	if config_path is None:
 		config_path = get_configs(args.model_dir)
 		print(f'Config path not specified, load the configs in model directory which is {config_path}')
-	elif args.no_keeping_config:
+	else:
 		# store false variable, mean true is default
 		print('Config specified, copying all to model dir')
 		for path in config_path:
@@ -59,7 +45,6 @@ if __name__ == '__main__':
 	assert mode in ['train', 'infer'], f'Unknown mode: {mode}'
 
 	model = Transformer(mode, args.model_dir, config_path)
-	model.load_checkpoint(args.model_dir, args.checkpoint, args.checkpoint_idx)
 
 	# run model
 	match mode:

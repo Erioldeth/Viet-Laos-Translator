@@ -8,59 +8,56 @@ import torch.nn.functional as functional
 from torch.autograd import Variable
 from torch.nn.utils.rnn import pad_sequence
 
-from module.inference.decode_strategy import DecodeStrategy
-
 
 def no_peeking_mask(size, device):
-	"""
-	Creating a mask for decoder that future words cannot be seen at prediction during training.
-	"""
+	"""Creating a mask for decoder that future words cannot be seen at prediction during training."""
 	return torch.tril(torch.ones((size, size), device=device)).bool()
 
 
-class BeamSearch(DecodeStrategy):
-	def __init__(self, model, max_len, device,
-	             beam_size=5, use_synonym_fn=False, replace_unk=None, length_normalize=None):
+class BeamSearch:
+	def __init__(self, model, max_len, device, beam_size=5, replace_unk=None, length_normalize=None):
 		"""
 		Args:
 			model: the used model
 			max_len: the maximum timestep to be used
 			device: the device to perform calculation
 			beam_size: the size of the beam itself
-			use_synonym_fn: if set, use the get_synonym fn from wordnet to try replace <unk>
 			replace_unk: a tuple of [layer, head] designation, to replace the unknown word by chosen attention
 		"""
 		super(BeamSearch, self).__init__(model, max_len, device)
+		self.model = model
+		self.SRC, self.TRG = model.SRC, model.TRG
+		self.max_len = max_len
+
 		self.beam_size = beam_size
-		self._use_synonym = use_synonym_fn
 		self._replace_unk = replace_unk
 		self._length_norm = length_normalize
 
-	def init_vars(self, src):
+		self.device = device
+
+	def init_vars(self, batch):
 		"""
 		Calculate the required matrices during translation after the model is finished
 		Input:
-		:param src: The batch of sentences
+		:param batch: The batch of sentences
 
 		Output: Initialize the first character includes outputs, e_outputs, log_scores
 		"""
 		model = self.model
-		batch_size = len(src)
+		batch_size = len(batch)
 		row_b = self.beam_size * batch_size
 
 		init_tok = self.TRG.vocab.stoi['<sos>']
-		src_mask = (src != self.SRC.vocab.stoi['<pad>']).unsqueeze(-2).to(self.device)
-		src = src.to(self.device)
+		src_mask = (batch != self.SRC.vocab.stoi['<pad>']).unsqueeze(-2).to(self.device)
+		batch = batch.to(self.device)
 
 		# Encoder
-		# raise Exception(src.shape, src_mask.shape)
-		e_output = model.encode(src, src_mask)
-		outputs = torch.LongTensor([[init_tok] for _ in range(batch_size)])
-		outputs = outputs.to(self.device)
+		e_output = model.encoder(batch, src_mask)
+		outputs = torch.LongTensor([[init_tok] for _ in range(batch_size)]).to(self.device)
 		trg_mask = no_peeking_mask(1, self.device)
 
 		# Decoder
-		out = model.to_logits(model.decode(outputs, e_output, src_mask, trg_mask))
+		out = model.decoder(outputs, e_output, src_mask, trg_mask)
 		out = functional.softmax(out, dim=-1)
 		probs, ix = out[:, -1].data.topk(self.beam_size)
 
@@ -96,18 +93,17 @@ class BeamSearch(DecodeStrategy):
 
 		probs, ix = out[:, -1].data.topk(self.beam_size)
 
-		probs_rep = torch.Tensor([[1] + [1e-100] * (self.beam_size - 1)] * row_b).view(row_b, self.beam_size).to(
-			self.device)
-		ix_rep = torch.LongTensor([[eos_id] + [-1] * (self.beam_size - 1)] * row_b).view(row_b, self.beam_size).to(
-			self.device)
+		probs_rep = (torch.Tensor([[1] + [1e-100] * (self.beam_size - 1)] * row_b)
+		             .view(row_b, self.beam_size)
+		             .to(self.device))
+		ix_rep = (torch.LongTensor([[eos_id] + [-1] * (self.beam_size - 1)] * row_b)
+		          .view(row_b, self.beam_size)
+		          .to(self.device))
 
 		check_eos = torch.repeat_interleave((outputs[:, i - 1] == eos_id).view(row_b, 1), self.beam_size, 1)
 
 		probs = torch.where(check_eos, probs_rep, probs)
 		ix = torch.where(check_eos, ix_rep, ix)
-
-		#        if(debug):
-		#            print("kprobs before debug: ", probs, probs_rep, ix, ix_rep, log_scores)
 
 		log_probs = torch.log(probs).to(self.device) + log_scores.to(self.device)  # CPU
 
@@ -187,7 +183,7 @@ class BeamSearch(DecodeStrategy):
 		eos_tok = self.TRG.vocab.stoi['<eos>']
 		src_mask = (batch != self.SRC.vocab.stoi['<pad>']).unsqueeze(-2)
 		src_mask = torch.repeat_interleave(src_mask, self.beam_size, 0).to(self.device)
-		is_finished = torch.LongTensor([[eos_tok] for i in range(self.beam_size * len(batch))]).view(-1).to(self.device)
+		is_finished = torch.LongTensor([[eos_tok] for _ in range(self.beam_size * len(batch))]).view(-1).to(self.device)
 
 		for i in range(2, self.max_len):
 			trg_mask = no_peeking_mask(i, self.device)
@@ -200,9 +196,6 @@ class BeamSearch(DecodeStrategy):
 			# Occurrences of end symbols for all input sentences.
 			if torch.equal(outputs[:, i], is_finished):
 				break
-
-		#        if(self._replace_unk):
-		#            outputs = self.replace_unknown(attn, src, outputs)
 
 		# reshape outputs and log_probs to [batch, beam] numpy array
 		batch_size = batch.shape[0]
@@ -238,12 +231,11 @@ class BeamSearch(DecodeStrategy):
 
 		return translated_sentences[:, 0] if n_best == 1 else translated_sentences[:, :n_best]
 
-	def transl_batch(self, batch: list[str] | torch.Tensor, field_processed=False,
+	def transl_batch(self, batch: list[str] | torch.Tensor,
 	                 src_size_limit=None, output_tokens=False, replace_unk=None):
 		"""Translate a batch of sentences together. Currently disabling the synonym func.
 		Args:
 			batch: the batch of sentences to be translated
-			field_processed: if the sentences had been already processed (i.e. part of batched validation data)
 			src_size_limit: if set, trim the input if it crosses this value.
 			Added due to current positional encoding support only <=200 tokens
 			output_tokens: the output format.
@@ -254,10 +246,10 @@ class BeamSearch(DecodeStrategy):
 		"""
 		self.model.eval()
 		# create the indiced batch.
-		processed_batch = self.preprocess_batch(batch, field_processed, src_size_limit, True)
-		sent_ids, sent_tokens = (processed_batch, None) if field_processed else processed_batch
+		processed_batch = self.preprocess_batch(batch, src_size_limit, True)
+		sent_ids, sent_tokens = (processed_batch, None) if batch is torch.Tensor else processed_batch
 
-		assert isinstance(sent_ids, torch.Tensor), f'sent_ids is instead {type(sent_ids)}'
+		assert sent_ids is torch.Tensor, f'sent_ids is instead {type(sent_ids)}'
 
 		translated_sentences = self.beam_search(sent_ids, src_tokens=sent_tokens, replace_unk=replace_unk)
 
@@ -266,7 +258,7 @@ class BeamSearch(DecodeStrategy):
 
 		return translated_sentences
 
-	def preprocess_batch(self, batch: list[str] | torch.Tensor, field_processed=False,
+	def preprocess_batch(self, batch: list[str] | torch.Tensor,
 	                     src_size_limit=None, output_tokens=False, pad_token="<pad>"):
 		"""
 		Adding
@@ -276,10 +268,8 @@ class BeamSearch(DecodeStrategy):
 			output_tokens: if set, output a token version aside the id version, in [batch of [src_len]] str.
 			Note that it won't work with field_processed
 		"""
-		if field_processed:
-			# do nothing, as it had already performed tokenizing/stoi.
-			# Still cap the length of the batch due to possible infraction in valid
-			return batch if src_size_limit is None else batch[:, :src_size_limit]
+		if batch is torch.Tensor:
+			return batch
 
 		processed_sent = map(self.SRC.preprocess, batch)
 
@@ -288,14 +278,14 @@ class BeamSearch(DecodeStrategy):
 
 		processed_sent = list(processed_sent)
 		# convert to tensors, in indices format
-		tokenized_sent = [torch.LongTensor([self._token_to_index(t) for t in s]) for s in processed_sent]
+		tokenized_sent = [torch.LongTensor([self.SRC.vocab.stoi[t] for t in s]) for s in processed_sent]
 		# padding sentences
-		batch = Variable(pad_sequence(tokenized_sent, True, padding_value=self.SRC.vocab.stoi[pad_token]))
+		batch = Variable(pad_sequence(tokenized_sent, True, self.SRC.vocab.stoi[pad_token]))
 
 		return batch, processed_sent if output_tokens else batch
 
 	def length_normalize(self, lengths, log_probs, coff=0.6):
-		"""Normalize the probabilty score as in (Wu 2016). Use pure numpy values
+		"""Normalize the probability score as in (Wu 2016). Use pure numpy values
 		Args:
 			lengths: the length of the hypothesis. [batch, beam] of int->float
 			log_probs: the unchanged log probability for the whole hypothesis. [batch, beam] of float
@@ -315,7 +305,3 @@ class BeamSearch(DecodeStrategy):
 			eos_tok = self.TRG.vocab.stoi['<eos>']
 		eos, = np.nonzero(tokens == eos_tok)
 		return len(tokens) if not eos else eos[0]
-
-	def _token_to_index(self, tok):
-		"""Override to select, depending on the self._use_synonym param"""
-		return super(BeamSearch, self)._token_to_index(tok) if self._use_synonym else self.SRC.vocab.stoi[tok]
