@@ -1,301 +1,200 @@
-import logging
-import math
 import operator
 
 import numpy as np
 import torch
-import torch.nn.functional as functional
+from numpy import ndarray
+from torch import Tensor
 from torch.nn.utils.rnn import pad_sequence
 
 
-def no_peeking_mask(size, device):
-	"""Creating a mask for decoder that future words cannot be seen at prediction during training."""
-	return torch.tril(torch.ones((size, size), device=device)).bool()
-
-
 class BeamSearch:
-	def __init__(self, model, max_len, device, beam_size=5, replace_unk=None, length_normalize=None):
-		"""
-		Args:
-			model: the used model
-			max_len: the maximum timestep to be used
-			device: the device to perform calculation
-			beam_size: the size of the beam itself
-			replace_unk: a tuple of [layer, head] designation, to replace the unknown word by chosen attention
-		"""
+	def __init__(self, model, max_len, device, beam_size, replace_unk_head, length_normalize):
 		super(BeamSearch, self).__init__(model, max_len, device)
 		self.model = model
 		self.SRC, self.TRG = model.SRC, model.TRG
 		self.max_len = max_len
 
 		self.beam_size = beam_size
-		self._replace_unk = replace_unk
+		self._replace_unk_head = replace_unk_head
 		self._length_norm = length_normalize
 
 		self.device = device
 
-	def init_vars(self, batch):
-		"""
-		Calculate the required matrices during translation after the model is finished
-		Input:
-		:param batch: The batch of sentences
+	def transl_batch(self, batch: list[str], src_size_limit) -> list[str]:
+		padded_batch, tokenized_batch = self.preprocess_batch(batch, src_size_limit)
+		# padded_batch = [batch_size, max_src_len]
+		# tokenized_batch = [batch_size, *src_len]
 
-		Output: Initialize the first character includes outputs, e_outputs, log_scores
-		"""
+		translated_batch = self.search(padded_batch, tokenized_batch)
+
+		return [' '.join(token_list) for token_list in translated_batch]
+
+	def preprocess_batch(self, batch: list[str], src_size_limit) -> tuple[Tensor, list[list[str]]]:
+		tokenized_batch = [self.SRC.preprocess(s)[:src_size_limit] for s in batch]
+		# preprocessed_batch = [batch_size, *src_len]
+
+		indexed_batch = [torch.tensor([self.SRC.vocab.stoi[t] for t in s], torch.long) for s in tokenized_batch]
+		# indexed_batch = [batch_size, *src_len]
+
+		padded_batch = pad_sequence(indexed_batch, True, self.SRC.vocab.stoi['<pad>'])
+		# batch = [batch_size, max_src_len]
+
+		return padded_batch, tokenized_batch
+
+	def search(self, batch: Tensor, src_tokens: list[list[str]]) -> list[list[str]]:
 		model = self.model
+		device = self.device
+		beam_size = self.beam_size
+		trg_eos_idx = self.TRG.vocab.stoi['<eos>']
 		batch_size = len(batch)
-		row_b = self.beam_size * batch_size
 
-		init_tok = self.TRG.vocab.stoi['<sos>']
-		src_mask = (batch != self.SRC.vocab.stoi['<pad>']).unsqueeze(-2).to(self.device)
-		batch = batch.to(self.device)
+		hypotheses, memory, log_scores = self.init_search(batch)
+		# hypotheses = [batch_size * beam_size, max_len]
+		# memory = [batch_size * beam_size, src_len, d_model]
+		# log_scores = [batch_size * beam_size, 1]
 
-		# Encoder
-		e_output = model.encoder(batch, src_mask)
-		outputs = torch.LongTensor([[init_tok] for _ in range(batch_size)]).to(self.device)
-		trg_mask = no_peeking_mask(1, self.device)
+		src_mask = torch.repeat_interleave((batch != model.src_pad_idx)[:, None, None], beam_size, 0).to(device)
+		# src_mask = [batch_size * beam_size, 1, 1, src_len]
 
-		# Decoder
-		out = model.decoder(outputs, e_output, src_mask, trg_mask)
-		out = functional.softmax(out, dim=-1)
-		probs, ix = out[:, -1].data.topk(self.beam_size)
+		all_eos = torch.full([batch_size * beam_size], trg_eos_idx, dtype=torch.long).to(device)
+		# all_eos = [batch_size * beam_size]
 
-		log_scores = torch.Tensor([math.log(p) for p in probs.data.view(-1)]).view(-1, 1)
-
-		outputs = torch.zeros(row_b, self.max_len).long()
-		outputs = outputs.to(self.device)
-		outputs[:, 0] = init_tok
-		outputs[:, 1] = ix.view(-1)
-
-		e_outputs = torch.repeat_interleave(e_output, self.beam_size, 0)
-
-		# raise Exception(outputs[:, :2], e_outputs)
-
-		return outputs, e_outputs, log_scores
-
-	def compute_k_best(self, outputs, out, log_scores, i):
-		"""
-		Compute k words with the highest conditional probability
-		Args:
-			outputs: Array has k previous candidate output sequences. [batch_size*beam_size, max_len]
-			i: the current timestep to execute. Int
-			out: current output of the model at timestep. [batch_size*beam_size, vocab_size]
-			log_scores: Conditional probability of past candidates (in outputs) [batch_size * beam_size]
-
-		Returns:
-			new outputs has k best candidate output sequences
-			log_scores for each of those candidate
-		"""
-		row_b = len(out)
-		batch_size = row_b // self.beam_size
-		eos_id = self.TRG.vocab.stoi['<eos>']
-
-		probs, ix = out[:, -1].data.topk(self.beam_size)
-
-		probs_rep = (torch.Tensor([[1] + [1e-100] * (self.beam_size - 1)] * row_b)
-		             .view(row_b, self.beam_size)
-		             .to(self.device))
-		ix_rep = (torch.LongTensor([[eos_id] + [-1] * (self.beam_size - 1)] * row_b)
-		          .view(row_b, self.beam_size)
-		          .to(self.device))
-
-		check_eos = torch.repeat_interleave((outputs[:, i - 1] == eos_id).view(row_b, 1), self.beam_size, 1)
-
-		probs = torch.where(check_eos, probs_rep, probs)
-		ix = torch.where(check_eos, ix_rep, ix)
-
-		log_probs = torch.log(probs).to(self.device) + log_scores.to(self.device)  # CPU
-
-		k_probs, k_ix = log_probs.view(batch_size, -1).topk(self.beam_size)
-
-		# Use cpu
-		k_probs, k_ix = torch.Tensor(k_probs.cpu().data.numpy()), torch.LongTensor(k_ix.cpu().data.numpy())
-		row = k_ix // self.beam_size + torch.LongTensor([[v * self.beam_size] for v in range(batch_size)])
-		col = k_ix % self.beam_size
-
-		outputs[:, :i] = outputs[row.view(-1), :i]
-		outputs[:, i] = ix[row.view(-1), col.view(-1)]
-		log_scores = k_probs.view(-1, 1)
-
-		return outputs, log_scores
-
-	def replace_unknown(self, outputs, sentences, attn, selector_tuple, unknown_token="<unk>"):
-		"""Replace the unknown words in the outputs with the highest valued attentionized words.
-		Args:
-			outputs: the output from decoding. [batch, beam] of list of str
-			sentences: the original wordings of the sentences. [batch_size, src_len] of str
-			attn: the attention received, in the form of list:  [layers units of (self-attention, attention) with shapes of [batchbeam, heads, tgt_len, tgt_len] & [batchbeam, heads, tgt_len, src_len] respectively]
-			selector_tuple: (layer, head) used to select the attention
-			unknown_token: token used for checking. str
-		Returns:
-			the replaced version, in the same shape as outputs
-			"""
-
-		layer_used, head_used = selector_tuple
-		# it should be [batchbeam, tgt_len, src_len], as we are using the attention to source
-		used_attention = attn[layer_used][-1][:, head_used]
-		# flatten the outputs back to batchbeam
-		flattened_outputs = outputs.reshape((-1,))
-		# [batchbeam, tgt_len] of the best indices
-		# Also convert to numpy version (remove sos not needed as it is attention of outputs)
-		select_id_src = torch.argmax(used_attention, dim=-1).cpu().numpy()
-		# used custom-calculated beam_size as we might not output the entirety of beams.
-		# See beam_search fn for details
-		beam_size = select_id_src.shape[0] // len(sentences)
-		# select per batchbeam. source batch id is found by dividing batchbeam id per beam;
-		# we are selecting [tgt_len] indices from [src_len] tokens;
-		# then concat at the first dimensions to retrieve [batch_beam, tgt_len] of replacement tokens
-		# need itemgetter / map to retrieve from list
-		replace_tokens = [operator.itemgetter(*src_idx)(sentences[bidx // beam_size])
-		                  for bidx, src_idx in enumerate(select_id_src)]
-
-		# zip together with sentences; then output { the token if not unk / the replacement if is }
-		# Note that this will trim the orig version down to repl size.
-		zipped = zip(flattened_outputs, replace_tokens)
-		replaced = np.array(
-			[[tok if tok != unknown_token else rpl for rpl, tok in zip(repl, orig)] for orig, repl in zipped])
-		# reshape back to outputs shape [batch, beam] of list
-		return replaced.reshape(outputs.shape)
-
-	def beam_search(self, batch, src_tokens=None, n_best=1, length_norm=None, replace_unk=None):
-		"""
-		Beam search select k words with the highest conditional probability to be the first word
-		of the k candidate output sequences.
-		Args:
-			batch: The batch of sentences, already in [batch_size, tokens] of int
-			src_tokens: src in str version, same size as above. Used almost exclusively for replace unknown word
-			n_best: number of usable values per beam loaded
-			length_norm: if specified, normalize as per (Wu, 2016);
-			note that if not inputted then it will still use __init__ value as default. float
-			replace_unk: if specified, do replace unknown word using attention of (layer, head);
-			note that if not inputted, it will still use __init__ value as default. (int, int)
-		Return:
-			An array of translated sentences, in list-of-tokens format.
-			Either [batch_size, n_best, tgt_len] when n_best > 1
-			Or [batch_size, tgt_len] when n_best == 1
-		"""
-		model = self.model
-		outputs, e_outputs, log_scores = self.init_vars(batch)
-
-		eos_tok = self.TRG.vocab.stoi['<eos>']
-		src_mask = (batch != self.SRC.vocab.stoi['<pad>']).unsqueeze(-2)
-		src_mask = torch.repeat_interleave(src_mask, self.beam_size, 0).to(self.device)
-		is_finished = torch.LongTensor([[eos_tok] for _ in range(self.beam_size * len(batch))]).view(-1).to(self.device)
-
+		attn = None
 		for i in range(2, self.max_len):
-			trg_mask = no_peeking_mask(i, self.device)
+			trg_mask = torch.tril(torch.ones(i, i)).to(device, dtype=torch.bool)
 
-			decoder_output, attn = model.decoder(outputs[:, :i], e_outputs, src_mask, trg_mask)
-			out = model.out(decoder_output)
-			out = functional.softmax(out, dim=-1)
-			outputs, log_scores = self.compute_k_best(outputs, out, log_scores, i)
+			output, attn = model.decoder(hypotheses[:, :i], memory, src_mask, trg_mask)
+			# output = [batch_size * beam_size, i, output_dim]
+			# attn = [batch_size * beam_size, heads, i, src_len]
 
-			# Occurrences of end symbols for all input sentences.
-			if torch.equal(outputs[:, i], is_finished):
+			hypotheses, log_scores = self.compute_k_best(hypotheses, output, log_scores, i)
+
+			if torch.equal(hypotheses[:, i], all_eos):
 				break
 
-		# reshape outputs and log_probs to [batch, beam] numpy array
-		batch_size = batch.shape[0]
-		outputs = outputs.cpu().numpy().reshape((batch_size, self.beam_size, self.max_len))
-		log_scores = log_scores.cpu().numpy().reshape((batch_size, self.beam_size))
+		hypotheses = hypotheses.view(batch_size, self.beam_size, -1)
+		log_scores = log_scores.view(batch_size, self.beam_size)
+		# hypotheses = [batch_size, beam_size, trg_len]
+		# log_scores = [batch_size, beam_size]
 
-		# Get the best sentences for every beam: splice by length and itos the indices, result in an array of tokens
-		# also remove the first token in this timestep (as it is sos)
-		trim_and_itos = lambda sent: [self.TRG.vocab.itos[i] for i in sent[1:self._length(sent, eos_tok=eos_tok)]]
-		translated_sentences = np.empty(outputs.shape[:-1], dtype=object)
-		for ba in range(outputs.shape[0]):
-			for bm in range(outputs.shape[1]):
-				translated_sentences[ba, bm] = trim_and_itos(outputs[ba, bm])
+		transl_tokens = lambda tokens: [self.TRG.vocab.itos[token] for token in tokens[1:self._length(tokens)]]
+		translated_tokens = np.array([[transl_tokens(beam) for beam in batch] for batch in hypotheses], dtype=object)
+		# translated_tokens = [batch_size, beam_size, *trg_len]
 
-		if replace_unk is None:
-			replace_unk = self._replace_unk
-		if replace_unk:
-			# replace unknown words per translated sentences.
-			# Do it before normalization (since that is independent on actual tokens)
-			if src_tokens is None:
-				logging.warn(
-					"replace_unknown option enabled but no src_tokens supplied for the task. The method will not run.")
-			else:
-				translated_sentences = self.replace_unknown(translated_sentences, src_tokens, attn, replace_unk)
+		translated_tokens = self.replace_unknown(translated_tokens, src_tokens, attn)
+		# translated_tokens = [batch_size, beam_size, *trg_len]
 
-		if length_norm is None:
-			length_norm = self._length_norm
-		if length_norm is not None:
-			# perform length normalization calculation and reorganize the sentences accordingly
-			lengths = np.apply_along_axis(lambda x: self._length(x, eos_tok=eos_tok), -1, outputs)
-			log_scores, indices = self.length_normalize(lengths, log_scores, coff=length_norm)
-			translated_sentences = np.array([beams[ids] for beams, ids in zip(translated_sentences, indices)])
+		if self._length_norm is not None:
+			lengths = np.apply_along_axis(lambda x: self._length(x), -1, hypotheses)
+			# lengths = [batch_size, beam_size]
 
-		return translated_sentences[:, 0] if n_best == 1 else translated_sentences[:, :n_best]
+			penalized_probs = log_scores / (((lengths + 5) / 6) ** self._length_norm)
+			# penalized_probs = [batch_size, beam_size]
 
-	def transl_batch(self, batch: list[str] | torch.Tensor,
-	                 src_size_limit=None, output_tokens=False, replace_unk=None):
-		"""Translate a batch of sentences together. Currently disabling the synonym func.
-		Args:
-			batch: the batch of sentences to be translated
-			src_size_limit: if set, trim the input if it crosses this value.
-			Added due to current positional encoding support only <=200 tokens
-			output_tokens: the output format.
-			False will give a batch of sentences (str), while True will give batch of tokens (list of str)
-			replace_unk: see beam_search for usage. (int, int) or False to suppress __init__ value
-		Return:
-			the result of translation, with format dictated by output_tokens
-		"""
-		self.model.eval()
-		# create the indiced batch.
-		processed_batch = self.preprocess_batch(batch, src_size_limit, True)
-		sent_ids, sent_tokens = (processed_batch, None) if batch is torch.Tensor else processed_batch
+			indices = np.argsort(penalized_probs)[:, ::-1]
+			# indices = [batch_size, beam_size]
 
-		assert sent_ids is torch.Tensor, f'sent_ids is instead {type(sent_ids)}'
+			translated_tokens = np.array([beams[ids] for beams, ids in zip(translated_tokens, indices)])
 
-		translated_batch = self.beam_search(sent_ids, sent_tokens, replace_unk=replace_unk)
+		return translated_tokens[:, 0].tolist()
 
-		return translated_batch if output_tokens else [' '.join(token_list) for token_list in translated_batch]
+	def init_search(self, batch: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+		model = self.model
+		device = self.device
+		beam_size = self.beam_size
+		trg_sos_idx = self.TRG.vocab.stoi['<sos>']
+		batch_size = len(batch)
 
-	def preprocess_batch(self, batch: list[str] | torch.Tensor,
-	                     src_size_limit=None, output_tokens=False, pad_token="<pad>"):
-		"""
-		Adding
-			src_size_limit: int, option to limit the length of src.
-			src_lang: if specified (not None), append this token <{src_lang}> to the start of the batch
-			field_processed: bool: if the sentences had been already processed (i.e. part of batched validation data)
-			output_tokens: if set, output a token version aside the id version, in [batch of [src_len]] str.
-			Note that it won't work with field_processed
-		"""
-		if batch is torch.Tensor:
-			return batch
+		src = batch.to(device)
+		src_mask = (src != model.src_pad_idx)[:, None, None].to(device)
+		memory = model.encoder(src, src_mask)
+		# src = [batch_size, src_len]
+		# src_mask = [batch_size, 1, 1, src_len]
+		# memory = [batch_size, src_len, d_model]
 
-		processed_sent = map(self.SRC.preprocess, batch)
+		trg = torch.full([batch_size, 1], trg_sos_idx).to(device, dtype=torch.long)
+		trg_mask = torch.tril(torch.ones(1, 1)).to(device, dtype=torch.bool)
+		output, _ = model.decoder(trg, memory, src_mask, trg_mask)
+		# trg = [batch_size, 1]
+		# trg_mask = [1, 1]
+		# output = [batch_size, 1, output_dim]
 
-		if src_size_limit:
-			processed_sent = map(lambda x: x[:src_size_limit], processed_sent)
+		softmax_probs, indices = torch.softmax(output, dim=-1)[:, -1].topk(beam_size)
+		# softmax_probs = [batch_size, beam_size]
+		# indices = [batch_size, beam_size]
 
-		processed_sent = list(processed_sent)
-		# convert to tensors, in indices format
-		tokenized_sent = [torch.LongTensor([self.SRC.vocab.stoi[t] for t in s]) for s in processed_sent]
-		# padding sentences
-		batch = pad_sequence(tokenized_sent, True, self.SRC.vocab.stoi[pad_token])
+		log_scores = torch.log(softmax_probs).view(-1, 1)
+		# log_scores = [batch_size * beam_size, 1]
 
-		return batch, processed_sent if output_tokens else batch
+		hypotheses = torch.zeros(batch_size * beam_size, self.max_len).to(device, dtype=torch.long)
+		# hypotheses = [batch_size * beam_size, max_len]
+		hypotheses[:, 0] = trg_sos_idx
+		hypotheses[:, 1] = indices.view(-1)
 
-	def length_normalize(self, lengths, log_probs, coff=0.6):
-		"""Normalize the probability score as in (Wu 2016). Use pure numpy values
-		Args:
-			lengths: the length of the hypothesis. [batch, beam] of int->float
-			log_probs: the unchanged log probability for the whole hypothesis. [batch, beam] of float
-			coff: the alpha coefficient.
-		Returns:
-			Tuple of (penalized_values, indices) to reorganize outputs."""
-		lengths = ((lengths + 5) / 6) ** coff
-		penalized_probs = log_probs / lengths
-		indices = np.argsort(penalized_probs, axis=-1)[::-1]
-		# basically take log_probs values for every batch
-		reorganized_probs = np.array([prb[ids] for prb, ids in zip(penalized_probs, indices)])
-		return reorganized_probs, indices
+		memory = torch.repeat_interleave(memory, beam_size, 0)
+		# memory = [batch_size * beam_size, src_len, d_model]
 
-	def _length(self, tokens, eos_tok=None):
-		"""Retrieve the first location of eos_tok as length; else return the entire length"""
-		if eos_tok is None:
-			eos_tok = self.TRG.vocab.stoi['<eos>']
-		eos, = np.nonzero(tokens == eos_tok)
+		return hypotheses, memory, log_scores
+
+	def compute_k_best(self, hypotheses: Tensor, output: Tensor, log_scores: Tensor, i) -> tuple[Tensor, Tensor]:
+		device = self.device
+		beam_size = self.beam_size
+		trg_eos_idx = self.TRG.vocab.stoi['<eos>']
+		width = len(hypotheses)
+		batch_size = width // beam_size
+
+		probs, indices = torch.softmax(output, dim=-1)[:, -1].topk(beam_size)
+		# probs = [width, beam_size]
+		# indices = [width, beam_size]
+
+		repl_probs = torch.full([width, beam_size], 1e-100).to(device, dtype=torch.float)
+		repl_probs[:, 0] = 1
+		repl_indices = torch.full([width, beam_size], -1).to(device)
+		repl_indices[:, 0] = trg_eos_idx
+
+		is_eos = torch.repeat_interleave((hypotheses[:, i - 1] == trg_eos_idx)[:, None], beam_size, 1)
+		# is_eos = [width, beam_size]
+
+		probs, indices = torch.where(is_eos, repl_probs, probs), torch.where(is_eos, repl_indices, indices)
+		# probs = [width, beam_size]
+		# indices = [width, beam_size]
+
+		k_probs, k_indices = (torch.log(probs) + log_scores).to(device).view(batch_size, -1).topk(beam_size)
+		# k_probs = [batch_size, beam_size]
+		# k_indices = [batch_size, beam_size]
+
+		row = (k_indices // beam_size + torch.arange(0, batch_size * beam_size, beam_size)[:, None]).view(-1)
+		col = (k_indices % beam_size).view(-1)
+		# row = [batch_size * beam_size]
+		# col = [batch_size * beam_size]
+
+		hypotheses[:, :i] = hypotheses[row, :i]
+		hypotheses[:, i] = indices[row, col]
+
+		return hypotheses, k_probs.view(-1, 1)
+
+	def replace_unknown(self, translated_tokens: ndarray, src_tokens: list[list[str]], attn: Tensor) -> ndarray:
+		used_attention = attn[:, self._replace_unk_head]
+		# used_attention = [batch_size * beam_size, trg_len, src_len]
+
+		best_src_indices = torch.argmax(used_attention, dim=-1).numpy()
+		# select_id_src = [batch_size * beam_size, trg_len]
+
+		repl_tokens = np.array([operator.itemgetter(*src_indices)(src_tokens[bb_i // self.beam_size])
+		                        for bb_i, src_indices in enumerate(best_src_indices)],
+		                       dtype=object)
+		# repl_tokens = [batch_size * beam_size, trg_len]
+
+		orig_tokens = translated_tokens.ravel()
+		# orig_tokens = [batch_size * beam_size, *trg_len]
+
+		replaced = np.array([[ori if ori != '<unk>' else rpl
+		                      for ori, rpl in zip(orig, repl)]
+		                     for orig, repl in zip(orig_tokens, repl_tokens)],
+		                    dtype=object)
+
+		return replaced.reshape(translated_tokens.shape)
+
+	def _length(self, tokens: Tensor):
+		eos, = (tokens == self.TRG.vocab.stoi['<eos>']).nonzero(as_tuple=True)
 		return len(tokens) if not eos else eos[0]

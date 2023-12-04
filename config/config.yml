@@ -12,7 +12,7 @@ d_model: 512
 n_layers: 6
 heads: 8
 # training config, evaluation, save & load section
-train_max_length: 50 # training samples with this much length in src/trg will be discarded
+train_max_length: 100 # training samples with this much length in src/trg will be discarded
 train_batch_size: 64
 epochs: 20
 # inference section
@@ -21,11 +21,9 @@ decode_strategy: BeamSearch
 decode_strategy_kwargs:
   beam_size: 5 # beam search size
   length_normalize: 0.6 # recalculate beam position by length. Currently only work in default BeamSearch
-  replace_unk: # tuple of layer/head attention to replace unknown words
-    - 0 # layer
-    - 0 # head
+  replace_unk_head: 0 # head attention to replace unknown words
 input_max_length: 200 # input longer than this value will be trimmed in inference. Note that this values are to be used during cached PE, hence, validation set with more than this many tokens will call a warning for the trimming.
-max_length: 160 # only perform up to this much timestep during inference
+max_length: 150 # only perform up to this much timestep during inference
 # optimizer and learning arguments section
 lr: !!float 1e-3
 optimizer_params:

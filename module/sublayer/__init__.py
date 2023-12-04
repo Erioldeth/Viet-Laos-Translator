@@ -1,2 +1,2 @@
-from module.sublayer.feed_forward import FeedForward
-from module.sublayer.multihead_attention import MultiHeadAttention
+from .feed_forward import FeedForward
+from .multihead_attention import MultiHeadAttention

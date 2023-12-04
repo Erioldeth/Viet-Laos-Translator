@@ -6,11 +6,23 @@ from model.save import load_vocab, save_vocab
 
 class Loader:
 	def __init__(self, train_path, valid_path, lang_tuple, option):
-
 		self.train_path = train_path
 		self.valid_path = valid_path
 		self.lang_tuple = lang_tuple
 		self.option = option
+
+	# TODO improve preprocessing
+	def build_fields(self) -> tuple[Field, Field]:
+		src_lang, trg_lang = self.lang_tuple
+		src_kwargs = {}
+		trg_kwargs = {}
+		field_kwargs = {
+			'init_token': '<sos>',
+			'eos_token': '<eos>',
+			'lower': True,
+			'batch_first': True
+		}
+		return Field(**src_kwargs, **field_kwargs), Field(**trg_kwargs, **field_kwargs)
 
 	def build_vocab(self, fields: tuple[Field, Field], model_dir, data=None, **kwargs):
 		if not load_vocab(model_dir, self.lang_tuple, fields):
@@ -26,7 +38,7 @@ class Loader:
 		else:
 			print('Load vocab from path successful')
 
-	def create_iterator(self, fields, model_dir, device):
+	def create_iterator(self, fields: tuple[Field, Field], model_dir, device) -> tuple[BucketIterator, BucketIterator]:
 		ext = self.lang_tuple
 		token_limit = self.option['train_max_length']
 		filter_fn = lambda x: len(x.src) <= token_limit and len(x.trg) <= token_limit

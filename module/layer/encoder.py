@@ -17,15 +17,12 @@ class Encoder(nn.Module):
 
 		self.dropout = nn.Dropout(dropout)
 
-		# TODO: check use of this
-		self._max_seq_length = max_len
-
 	def forward(self, src, src_mask):
 		# src = [batch_size, src_len]
 		# src_mask = [batch_size, 1, 1, src_len]
 		bs, src_len = src.shape
 
-		pos = torch.arange(0, src_len).unsqueeze(0).repeat(bs, 1)
+		pos = torch.arange(0, src_len)[None].repeat(bs, 1)
 		# pos = [batch_size, src_len]
 
 		x = self.dropout(self.tok_embed(src) * math.sqrt(self.d_model) + self.pos_embed(pos))

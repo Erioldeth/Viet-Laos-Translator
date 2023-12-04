@@ -6,13 +6,10 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import LambdaLR
-from torchtext.data import Field
 
 from config import *
 from model.save import save_model
-from module.inference import BeamSearch
-from module.layer import *
-from module.loader import Loader
+from module import *
 
 
 class Transformer(nn.Module):
@@ -32,16 +29,7 @@ class Transformer(nn.Module):
 		                     lang_tuple=(data_opt['src_lang'], data_opt['trg_lang']),
 		                     option=opt)
 
-		# TODO: improve preprocessing
-		src_kwargs = {}
-		trg_kwargs = {}
-		field_kwargs = {
-			'init_token': '<sos>',
-			'eos_token': '<eos>',
-			'lower': True,
-			'batch_first': True
-		}
-		self.fields = self.SRC, self.TRG = Field(**src_kwargs, **field_kwargs), Field(**trg_kwargs, **field_kwargs)
+		self.SRC, self.TRG = self.fields = self.loader.build_fields()
 
 		match mode:
 			case 'train':
@@ -78,7 +66,7 @@ class Transformer(nn.Module):
 		# trg_mask = [batch_size, 1, trg_len, trg_len]
 
 		memory = self.encoder(src, src_mask)
-		# e_output = [batch_size, src_len, d_model]
+		# memory = [batch_size, src_len, d_model]
 
 		output, attn = self.decoder(trg, memory, src_mask, trg_mask)
 		# output = [batch_size, trg_len, output_dim]
@@ -89,14 +77,15 @@ class Transformer(nn.Module):
 	def make_masks(self, src, trg):
 		# src = [batch_size, src_len]
 		# trg = [batch_size, trg_len]
+		device = self.device
 
-		src_mask = (src != self.src_pad_idx)[:, None, None]
+		src_mask = (src != self.src_pad_idx)[:, None, None].to(device)
 		# src_mask = [batch_size, 1, 1, src_len]
 
-		trg_pad_mask = (trg != self.trg_pad_idx)[:, None, None]
+		trg_pad_mask = (trg != self.trg_pad_idx)[:, None, None].to(device)
 		# trg_pad_mask = [batch_size, 1, 1, trg_len]
 		trg_len = trg.shape[1]
-		trg_sub_mask = torch.tril(torch.ones((trg_len, trg_len), device=self.device)).bool()
+		trg_sub_mask = torch.tril(torch.ones(trg_len, trg_len)).to(device, dtype=torch.bool)
 		# trg_sub_mask = [trg_len, trg_len]
 		trg_mask = trg_pad_mask & trg_sub_mask
 		# trg_mask = [batch_size, 1, trg_len, trg_len]
@@ -187,7 +176,7 @@ class Transformer(nn.Module):
 
 		best_valid_loss = float('inf')
 
-		for epoch in range(self.config['epochs']):
+		for epoch in range(opt['epochs']):
 			start = time.time()
 
 			train_loss = self.training(criterion, optimizer, scheduler)
@@ -204,7 +193,7 @@ class Transformer(nn.Module):
 				save_model(self, model_dir)
 
 	def run_infer(self, features_file, predictions_file):
-		self.to(self.device)
+		self.eval()
 
 		opt = self.config
 		batch_size = opt['valid_batch_size']
@@ -215,7 +204,6 @@ class Transformer(nn.Module):
 			inputs = [line.strip() for line in file.readlines()]
 
 		print('Performing inference ...')
-		self.eval()
 		start = time.time()
 
 		results = '\n'.join([translated_sentence

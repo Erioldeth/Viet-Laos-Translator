@@ -19,22 +19,20 @@ class Decoder(nn.Module):
 
 		self.dropout = nn.Dropout(dropout)
 
-		# TODO: check use of this
-		self._max_seq_length = max_len
-
 	def forward(self, trg, memory, src_mask, trg_mask):
-		# src = [batch_size, src_len]
+		# trg = [batch_size, trg_len]
 		# memory = [batch_size, src_len, d_model]
 		# src_mask = [batch_size, 1, 1, src_len]
 		# trg_mask = [batch_size, 1, trg_len, trg_len]
 		bs, trg_len = trg.shape
 
-		pos = torch.arange(0, trg_len).unsqueeze(0).repeat(bs, 1)
+		pos = torch.arange(0, trg_len)[None].repeat(bs, 1)
 		# pos = [batch_size, trg_len]
 
 		x = self.dropout(self.tok_embed(trg) * math.sqrt(self.d_model) + self.pos_embed(pos))
 		# x = [batch_size, trg_len, d_model]
 
+		attn = None
 		for layer in self.layers:
 			x, attn = layer(x, memory, src_mask, trg_mask)
 		# x = [batch_size, trg_len, d_model]
@@ -61,7 +59,7 @@ class DecoderLayer(nn.Module):
 		self.dropout = nn.Dropout(dropout)
 
 	def forward(self, trg, memory, src_mask, trg_mask):
-		# src = [batch_size, src_len]
+		# trg = [batch_size, trg_len, d_model]
 		# memory = [batch_size, src_len, d_model]
 		# src_mask = [batch_size, 1, 1, src_len]
 		# trg_mask = [batch_size, 1, trg_len, trg_len]
