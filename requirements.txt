@@ -1,8 +1,6 @@
 torch
 torchtext==0.6.0
-nltk
+sentencepiece
 PyYAML
 dill
-pandas
 numpy
-sentencepiece

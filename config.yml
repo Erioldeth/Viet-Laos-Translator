@@ -1,0 +1,33 @@
+# data setup
+data:
+  train_data_location: data/lo_vi/train2023
+  valid_data_location: data/lo_vi/dev2013
+  src_lang: .lo
+  trg_lang: .vi
+build_vocab_kwargs:
+  min_freq: 2
+# model params
+d_model: 512
+n_layers: 6
+heads: 8
+dropout: 0.1
+# training config
+train_max_length: 100
+train_batch_size: 64
+epochs: 20
+# inference config
+infer_max_length: 100
+input_max_length: 150
+infer_batch_size: 16
+decode_strategy_kwargs:
+  beam_size: 5
+  length_normalize: 0.6
+# optimizer & learning args
+lr: !!float 1e-3
+optimizer_params:
+  betas:
+    - 0.9
+    - 0.98
+  eps: !!float 1e-9
+n_warmup_steps: 4000
+label_smoothing: 0.1

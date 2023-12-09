@@ -8,14 +8,12 @@ from torch.nn.utils.rnn import pad_sequence
 
 
 class BeamSearch:
-	def __init__(self, model, max_len, device, beam_size, replace_unk_head, length_normalize):
-		super(BeamSearch, self).__init__(model, max_len, device)
+	def __init__(self, model, max_len, device, beam_size, length_normalize):
 		self.model = model
 		self.SRC, self.TRG = model.SRC, model.TRG
 		self.max_len = max_len
 
 		self.beam_size = beam_size
-		self._replace_unk_head = replace_unk_head
 		self._length_norm = length_normalize
 
 		self.device = device
@@ -67,7 +65,7 @@ class BeamSearch:
 			# output = [batch_size * beam_size, i, output_dim]
 			# attn = [batch_size * beam_size, heads, i, src_len]
 
-			hypotheses, log_scores = self.compute_k_best(hypotheses, output, log_scores, i)
+			hypotheses, log_scores = self.get_best(hypotheses, output, log_scores, i)
 
 			if torch.equal(hypotheses[:, i], all_eos):
 				break
@@ -78,7 +76,7 @@ class BeamSearch:
 		# log_scores = [batch_size, beam_size]
 
 		transl_tokens = lambda tokens: [self.TRG.vocab.itos[token] for token in tokens[1:self._length(tokens)]]
-		translated_tokens = np.array([[transl_tokens(beam) for beam in batch] for batch in hypotheses], dtype=object)
+		translated_tokens = np.array([[transl_tokens(beam) for beam in beams] for beams in hypotheses], dtype=object)
 		# translated_tokens = [batch_size, beam_size, *trg_len]
 
 		translated_tokens = self.replace_unknown(translated_tokens, src_tokens, attn)
@@ -94,7 +92,7 @@ class BeamSearch:
 			indices = np.argsort(penalized_probs)[:, ::-1]
 			# indices = [batch_size, beam_size]
 
-			translated_tokens = np.array([beams[ids] for beams, ids in zip(translated_tokens, indices)])
+			translated_tokens = np.array([beam[idx] for beam, idx in zip(translated_tokens, indices)])
 
 		return translated_tokens[:, 0].tolist()
 
@@ -136,7 +134,7 @@ class BeamSearch:
 
 		return hypotheses, memory, log_scores
 
-	def compute_k_best(self, hypotheses: Tensor, output: Tensor, log_scores: Tensor, i) -> tuple[Tensor, Tensor]:
+	def get_best(self, hypotheses: Tensor, output: Tensor, log_scores: Tensor, i) -> tuple[Tensor, Tensor]:
 		device = self.device
 		beam_size = self.beam_size
 		trg_eos_idx = self.TRG.vocab.stoi['<eos>']
@@ -174,7 +172,7 @@ class BeamSearch:
 		return hypotheses, k_probs.view(-1, 1)
 
 	def replace_unknown(self, translated_tokens: ndarray, src_tokens: list[list[str]], attn: Tensor) -> ndarray:
-		used_attention = attn[:, self._replace_unk_head]
+		used_attention = attn.sum(1)
 		# used_attention = [batch_size * beam_size, trg_len, src_len]
 
 		best_src_indices = torch.argmax(used_attention, dim=-1).numpy()

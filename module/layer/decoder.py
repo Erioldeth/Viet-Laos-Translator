@@ -7,7 +7,7 @@ from module.sublayer import *
 
 
 class Decoder(nn.Module):
-	def __init__(self, output_dim, d_model, N, heads, dropout, max_len=200):
+	def __init__(self, output_dim, d_model, N, heads, dropout, max_len):
 		super().__init__()
 
 		self.tok_embed = nn.Embedding(output_dim, d_model)
@@ -19,6 +19,8 @@ class Decoder(nn.Module):
 
 		self.dropout = nn.Dropout(dropout)
 
+		self.scale = math.sqrt(d_model)
+
 	def forward(self, trg, memory, src_mask, trg_mask):
 		# trg = [batch_size, trg_len]
 		# memory = [batch_size, src_len, d_model]
@@ -29,7 +31,7 @@ class Decoder(nn.Module):
 		pos = torch.arange(0, trg_len)[None].repeat(bs, 1)
 		# pos = [batch_size, trg_len]
 
-		x = self.dropout(self.tok_embed(trg) * math.sqrt(self.d_model) + self.pos_embed(pos))
+		x = self.dropout(self.tok_embed(trg) * self.scale + self.pos_embed(pos))
 		# x = [batch_size, trg_len, d_model]
 
 		attn = None

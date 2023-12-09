@@ -20,12 +20,9 @@ def is_files(*paths):
 	return all([os.path.isfile(path) for path in paths])
 
 
-def save_vocab(path, lang_tuple, fields, force_new=False):
+def save_vocab(fields, path, lang_tuple):
 	src_field, trg_field = fields
 	src_vocab_path, trg_vocab_path = make_vocab_path(path, lang_tuple)
-
-	if not force_new and is_files(src_vocab_path, trg_vocab_path):
-		return
 
 	with (io.open(src_vocab_path, 'wb') as src_vocab_file,
 	      io.open(trg_vocab_path, 'wb') as trg_vocab_file):
@@ -33,7 +30,7 @@ def save_vocab(path, lang_tuple, fields, force_new=False):
 		dill.dump(trg_field.vocab, trg_vocab_file)
 
 
-def load_vocab(path, lang_tuple, fields):
+def load_vocab(fields, path, lang_tuple):
 	src_field, trg_field = fields
 	src_vocab_path, trg_vocab_path = make_vocab_path(path, lang_tuple)
 

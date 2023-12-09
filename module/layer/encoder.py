@@ -7,7 +7,7 @@ from module.sublayer import *
 
 
 class Encoder(nn.Module):
-	def __init__(self, input_dim, d_model, N, heads, dropout, max_len=200):
+	def __init__(self, input_dim, d_model, N, heads, dropout, max_len):
 		super().__init__()
 
 		self.tok_embed = nn.Embedding(input_dim, d_model)
@@ -17,6 +17,8 @@ class Encoder(nn.Module):
 
 		self.dropout = nn.Dropout(dropout)
 
+		self.scale = math.sqrt(d_model)
+
 	def forward(self, src, src_mask):
 		# src = [batch_size, src_len]
 		# src_mask = [batch_size, 1, 1, src_len]
@@ -25,7 +27,7 @@ class Encoder(nn.Module):
 		pos = torch.arange(0, src_len)[None].repeat(bs, 1)
 		# pos = [batch_size, src_len]
 
-		x = self.dropout(self.tok_embed(src) * math.sqrt(self.d_model) + self.pos_embed(pos))
+		x = self.dropout(self.tok_embed(src) * self.scale + self.pos_embed(pos))
 		# x = [batch_size, src_len, d_model]
 
 		for layer in self.layers:
