@@ -1,3 +1,4 @@
+import gc
 import operator
 
 import numpy as np
@@ -19,6 +20,9 @@ class BeamSearch:
 		self.device = device
 
 	def transl_batch(self, batch: list[str], src_size_limit) -> list[str]:
+		gc.collect()
+		torch.cuda.empty_cache()
+
 		padded_batch, tokenized_batch = self.preprocess_batch(batch, src_size_limit)
 		# padded_batch = [batch_size, max_src_len]
 		# tokenized_batch = [batch_size, *src_len]
@@ -31,7 +35,7 @@ class BeamSearch:
 		tokenized_batch = [self.SRC.preprocess(s)[:src_size_limit] for s in batch]
 		# preprocessed_batch = [batch_size, *src_len]
 
-		indexed_batch = [torch.tensor([self.SRC.vocab.stoi[t] for t in s], torch.long) for s in tokenized_batch]
+		indexed_batch = [torch.tensor([self.SRC.vocab.stoi[t] for t in s], dtype=torch.long) for s in tokenized_batch]
 		# indexed_batch = [batch_size, *src_len]
 
 		padded_batch = pad_sequence(indexed_batch, True, self.SRC.vocab.stoi['<pad>'])
@@ -161,7 +165,8 @@ class BeamSearch:
 		# k_probs = [batch_size, beam_size]
 		# k_indices = [batch_size, beam_size]
 
-		row = (k_indices // beam_size + torch.arange(0, batch_size * beam_size, beam_size)[:, None]).view(-1)
+		row = (k_indices // beam_size + torch.arange(0, batch_size * beam_size, beam_size, device=device)[:,
+		                                None]).view(-1)
 		col = (k_indices % beam_size).view(-1)
 		# row = [batch_size * beam_size]
 		# col = [batch_size * beam_size]

@@ -1,6 +1,9 @@
 import argparse
 
+import torch
+
 from model import Transformer
+from model.save import load_model
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser(description='Main argument parser')
@@ -18,10 +21,13 @@ if __name__ == '__main__':
 	mode = args.run_mode
 	assert mode in ['train', 'infer'], f'Unknown mode: {mode}'
 
-	model = Transformer(mode, 'trained_model', 'config.yml')
+	# device = torch.device('cpu')
+	device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+	model = Transformer(mode, 'trained_model', 'config.yml', device).to(device)
 
 	match mode:
 		case 'train':
 			model.run_train('trained_model')
 		case 'infer':
+			load_model(model, 'trained_model')
 			model.run_infer(args.features_file, args.predictions_file)

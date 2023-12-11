@@ -1,3 +1,4 @@
+import gc
 import io
 import math
 import time
@@ -13,17 +14,26 @@ from module import *
 
 
 class Transformer(nn.Module):
-	def __init__(self, mode, model_dir, config_path):
+	def __init__(self, mode, model_dir, config_path, device):
 		super().__init__()
 
-		self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+		self.device = device
+
+		print('Loading config ...')
 		with io.open(config_path, 'r', encoding='utf-8') as stream:
 			opt = self.config = yaml.full_load(stream)
 
-		self.loader = Loader(**opt['data'])
+		print('Loading data ...')
+		data = opt['data']
+		train_path = data['train_data_location']
+		valid_path = data['valid_data_location']
+		lang_tuple = data['src_lang'], data['trg_lang']
+		self.loader = Loader(train_path, valid_path, lang_tuple, opt)
 
+		print('Building vocab ...')
 		self.SRC, self.TRG = self.fields = self.loader.build_fields(model_dir)
 
+		print('Creating iterator ...')
 		match mode:
 			case 'train':
 				self.train_iter, self.valid_iter = self.loader.create_iterator(self.fields, model_dir, self.device)
@@ -32,19 +42,11 @@ class Transformer(nn.Module):
 
 		self.src_pad_idx, self.trg_pad_idx = self.SRC.vocab.stoi['<pad>'], self.TRG.vocab.stoi['<pad>']
 
+		print('Building encoder and decoder ...')
 		d_model, N, heads, dropout = opt['d_model'], opt['n_layers'], opt['heads'], opt['dropout']
-		train_max_len = opt['train_max_length']
-		infer_max_len = opt['infer_max_length']
-		input_max_len = opt['input_max_length']
-		encoder_max_len = max(input_max_len, train_max_len)
-		decoder_max_len = max(infer_max_len, train_max_len)
 
-		self.encoder = Encoder(len(self.SRC.vocab), d_model, N, heads, dropout, encoder_max_len)
-		self.decoder = Decoder(len(self.TRG.vocab), d_model, N, heads, dropout, decoder_max_len)
-
-		self.decode_strategy = BeamSearch(self, infer_max_len, self.device, **opt['decode_strategy_kwargs'])
-
-		self.to(self.device)
+		self.encoder = Encoder(len(self.SRC.vocab), d_model, N, heads, dropout, 200, self.device)
+		self.decoder = Decoder(len(self.TRG.vocab), d_model, N, heads, dropout, 200, self.device)
 
 	def forward(self, src, trg):
 		# src = [batch_size, src_len]
@@ -67,20 +69,20 @@ class Transformer(nn.Module):
 		# trg = [batch_size, trg_len]
 		device = self.device
 
-		src_mask = (src != self.src_pad_idx)[:, None, None].to(device)
+		src_mask = (src != self.src_pad_idx)[:, None, None]
 		# src_mask = [batch_size, 1, 1, src_len]
 
-		trg_pad_mask = (trg != self.trg_pad_idx)[:, None, None].to(device)
+		trg_pad_mask = (trg != self.trg_pad_idx)[:, None, None]
 		# trg_pad_mask = [batch_size, 1, 1, trg_len]
 		trg_len = trg.shape[1]
-		trg_sub_mask = torch.tril(torch.ones(trg_len, trg_len)).to(device, dtype=torch.bool)
+		trg_sub_mask = torch.tril(torch.ones(trg_len, trg_len, device=device)).bool()
 		# trg_sub_mask = [trg_len, trg_len]
 		trg_mask = trg_pad_mask & trg_sub_mask
 		# trg_mask = [batch_size, 1, trg_len, trg_len]
 
 		return src_mask, trg_mask
 
-	def training(self, criterion, optimizer, scheduler):
+	def perform_training(self, criterion, optimizer, scheduler):
 		self.train()
 
 		total_loss = 0.0
@@ -112,7 +114,7 @@ class Transformer(nn.Module):
 
 		return total_loss / len(self.train_iter)
 
-	def validating(self, criterion):
+	def perform_validating(self, criterion):
 		self.eval()
 
 		total_loss = 0.0
@@ -155,17 +157,20 @@ class Transformer(nn.Module):
 		opt = self.config
 
 		optimizer = Adam(self.parameters(), opt['lr'], **opt['optimizer_params'])
-		lr_lambda = lambda step: opt['d_model'] ** (-0.5) * min(step ** (-0.5), step * opt['n_warmup_steps'] ** (-1.5))
+		d_model, n_warmup_steps = opt['d_model'], opt['n_warmup_steps']
+		lr_lambda = lambda step: d_model ** (-0.5) * min((step + 1) ** (-0.5), (step + 1) * n_warmup_steps ** (-1.5))
 		scheduler = LambdaLR(optimizer, lr_lambda)
 		criterion = nn.CrossEntropyLoss(ignore_index=self.trg_pad_idx, label_smoothing=opt['label_smoothing'])
 
 		best_valid_loss = float('inf')
 
 		for epoch in range(opt['epochs']):
+			gc.collect()
+			torch.cuda.empty_cache()
 			start = time.time()
 
-			train_loss = self.training(criterion, optimizer, scheduler)
-			valid_loss = self.validating(criterion)
+			train_loss = self.perform_training(criterion, optimizer, scheduler)
+			valid_loss = self.perform_validating(criterion)
 
 			elapsed_time = time.time() - start
 			print(f'Epoch: {epoch + 1:02} - {elapsed_time // 60}m{elapsed_time % 60}s')
@@ -181,8 +186,12 @@ class Transformer(nn.Module):
 		self.eval()
 
 		opt = self.config
-		batch_size = opt['infer_batch_size']
 		input_max_len = opt['input_max_length']
+		infer_max_len = opt['infer_max_length']
+		batch_size = opt['infer_batch_size']
+
+		print('Building decode strategy ...')
+		decode_strategy = BeamSearch(self, infer_max_len, self.device, **opt['decode_strategy_kwargs'])
 
 		print(f'Reading features file from {features_file}...')
 		with io.open(features_file, 'rt', encoding='utf-8') as file:
@@ -193,7 +202,7 @@ class Transformer(nn.Module):
 
 		results = '\n'.join([translated_sentence
 		                     for batch in [inputs[i: i + batch_size] for i in range(0, len(inputs), batch_size)]
-		                     for translated_sentence in self.decode_strategy.transl_batch(batch, input_max_len)])
+		                     for translated_sentence in decode_strategy.transl_batch(batch, input_max_len)])
 
 		elapsed_time = time.time() - start
 		print(f'Inference done, cost {elapsed_time // 60}m{elapsed_time % 60}s')

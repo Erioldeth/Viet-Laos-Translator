@@ -1,7 +1,7 @@
 # data setup
 data:
-  train_data_location: data/lo_vi/train2023
-  valid_data_location: data/lo_vi/dev2013
+  train_data_location: data/lo_vi/train
+  valid_data_location: data/lo_vi/dev
   src_lang: .lo
   trg_lang: .vi
 build_vocab_kwargs:
@@ -13,7 +13,7 @@ heads: 8
 dropout: 0.1
 # training config
 train_max_length: 100
-train_batch_size: 64
+train_batch_size: 16
 epochs: 20
 # inference config
 infer_max_length: 100

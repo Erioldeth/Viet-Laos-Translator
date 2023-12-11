@@ -5,7 +5,7 @@ import torch.nn as nn
 
 
 class MultiHeadAttention(nn.Module):
-	def __init__(self, heads, d_model, dropout=0.1):
+	def __init__(self, heads, d_model, dropout):
 		super().__init__()
 
 		assert d_model % heads == 0

@@ -7,10 +7,6 @@ from torchtext.datasets import TranslationDataset
 from model.save import load_vocab, save_vocab
 
 
-def get_tokenizer(tokenizer_file):
-	sp_model = load_sp_model(tokenizer_file)
-
-
 class Loader:
 	def __init__(self, train_path, valid_path, lang_tuple, option):
 		self.train_path = train_path
@@ -18,10 +14,10 @@ class Loader:
 		self.lang_tuple = lang_tuple
 		self.option = option
 
-	def build_fields(self, model_dir) -> tuple[Field, Field]:
+	def build_fields(self, model_dir, token_type='unigram') -> tuple[Field, Field]:
 		src_lang, trg_lang = self.lang_tuple
-		src_tokenizer_file = f'{model_dir}/tokenizer{src_lang}.model'
-		trg_tokenizer_file = f'{model_dir}/tokenizer{trg_lang}.model'
+		src_tokenizer_file = f'{model_dir}/{src_lang[1:]}/{token_type}/tokenizer{src_lang}_{token_type}.model'
+		trg_tokenizer_file = f'{model_dir}/{trg_lang[1:]}/{token_type}/tokenizer{trg_lang}_{token_type}.model'
 		assert os.path.isfile(src_tokenizer_file) and os.path.isfile(trg_tokenizer_file), "Missing tokenizer"
 
 		field_kwargs = {
@@ -52,10 +48,12 @@ class Loader:
 		ext = self.lang_tuple
 		token_limit = self.option['train_max_length']
 
+		print('Building dataset ...')
 		filter_fn = lambda x: len(x.src) <= token_limit and len(x.trg) <= token_limit
 		train_data = TranslationDataset(self.train_path, ext, fields, filter_pred=filter_fn)
 		valid_data = TranslationDataset(self.valid_path, ext, fields)
 
+		print('Building vocab from dataset ...')
 		self.build_vocab(fields, model_dir, train_data, **opt['build_vocab_kwargs'])
 
 		return BucketIterator.splits((train_data, valid_data), [opt['train_batch_size']] * 2, device=device)

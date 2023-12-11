@@ -3,7 +3,7 @@ from torch.nn.functional import gelu
 
 
 class FeedForward(nn.Module):
-	def __init__(self, d_model, dropout=0.1):
+	def __init__(self, d_model, dropout):
 		super().__init__()
 
 		self.W1 = nn.Linear(d_model, 2048)

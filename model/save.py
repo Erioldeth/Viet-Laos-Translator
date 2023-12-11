@@ -48,3 +48,8 @@ def load_vocab(fields, path, lang_tuple):
 def save_model(model, path):
 	save_path = os.path.join(path, MODEL_FILE_FORMAT.format('model', EXTENSION))
 	torch.save(model.state_dict(), save_path)
+
+
+def load_model(model, path):
+	save_path = os.path.join(path, MODEL_FILE_FORMAT.format('model', EXTENSION))
+	model.load_state_dict(torch.load(save_path))
