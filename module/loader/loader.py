@@ -1,7 +1,4 @@
-import os.path
-
 from torchtext.data import BucketIterator, Field
-from torchtext.data.functional import load_sp_model
 from torchtext.datasets import TranslationDataset
 
 from model.save import load_vocab, save_vocab
@@ -13,21 +10,6 @@ class Loader:
 		self.valid_path = valid_path
 		self.lang_tuple = lang_tuple
 		self.option = option
-
-	def build_fields(self, model_dir, token_type='unigram') -> tuple[Field, Field]:
-		src_lang, trg_lang = self.lang_tuple
-		src_tokenizer_file = f'{model_dir}/{src_lang[1:]}/{token_type}/tokenizer{src_lang}_{token_type}.model'
-		trg_tokenizer_file = f'{model_dir}/{trg_lang[1:]}/{token_type}/tokenizer{trg_lang}_{token_type}.model'
-		assert os.path.isfile(src_tokenizer_file) and os.path.isfile(trg_tokenizer_file), "Missing tokenizer"
-
-		field_kwargs = {
-			'init_token': '<sos>',
-			'eos_token': '<eos>',
-			'lower': True,
-			'batch_first': True
-		}
-		return (Field(tokenize=load_sp_model(src_tokenizer_file).EncodeAsPieces, **field_kwargs),
-		        Field(tokenize=load_sp_model(trg_tokenizer_file).EncodeAsPieces, **field_kwargs))
 
 	def build_vocab(self, fields: tuple[Field, Field], model_dir, data=None, **kwargs):
 		if not load_vocab(fields, model_dir, self.lang_tuple):

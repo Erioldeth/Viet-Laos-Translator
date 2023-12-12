@@ -4,3 +4,5 @@ sentencepiece
 PyYAML
 dill
 numpy
+laonlp
+underthesea

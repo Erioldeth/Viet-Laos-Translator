@@ -20,12 +20,12 @@ class BeamSearch:
 		self.device = device
 
 	def transl_batch(self, batch: list[str], src_size_limit) -> list[str]:
-		gc.collect()
-		torch.cuda.empty_cache()
-
 		padded_batch, tokenized_batch = self.preprocess_batch(batch, src_size_limit)
 		# padded_batch = [batch_size, max_src_len]
 		# tokenized_batch = [batch_size, *src_len]
+		print(padded_batch)
+		print([self.SRC.vocab.itos[t] for t in padded_batch[0]])
+		print(tokenized_batch)
 
 		translated_batch = self.search(padded_batch, tokenized_batch)
 
@@ -63,6 +63,9 @@ class BeamSearch:
 
 		attn = None
 		for i in range(2, self.max_len):
+			gc.collect()
+			torch.cuda.empty_cache()
+
 			trg_mask = torch.tril(torch.ones(i, i)).to(device, dtype=torch.bool)
 
 			output, attn = model.decoder(hypotheses[:, :i], memory, src_mask, trg_mask)
@@ -87,10 +90,10 @@ class BeamSearch:
 		# translated_tokens = [batch_size, beam_size, *trg_len]
 
 		if self._length_norm is not None:
-			lengths = np.apply_along_axis(lambda x: self._length(x), -1, hypotheses)
+			lengths = np.array([[self._length(beam) for beam in beams] for beams in hypotheses.cpu()])
 			# lengths = [batch_size, beam_size]
 
-			penalized_probs = log_scores / (((lengths + 5) / 6) ** self._length_norm)
+			penalized_probs = log_scores.detach().cpu().numpy() / (((lengths + 5) / 6) ** self._length_norm)
 			# penalized_probs = [batch_size, beam_size]
 
 			indices = np.argsort(penalized_probs)[:, ::-1]
@@ -149,7 +152,7 @@ class BeamSearch:
 		# probs = [width, beam_size]
 		# indices = [width, beam_size]
 
-		repl_probs = torch.full([width, beam_size], 1e-100).to(device, dtype=torch.float)
+		repl_probs = torch.full([width, beam_size], 1e-100, dtype=torch.float).to(device)
 		repl_probs[:, 0] = 1
 		repl_indices = torch.full([width, beam_size], -1).to(device)
 		repl_indices[:, 0] = trg_eos_idx
@@ -165,8 +168,7 @@ class BeamSearch:
 		# k_probs = [batch_size, beam_size]
 		# k_indices = [batch_size, beam_size]
 
-		row = (k_indices // beam_size + torch.arange(0, batch_size * beam_size, beam_size, device=device)[:,
-		                                None]).view(-1)
+		row = (k_indices // beam_size + torch.arange(0, batch_size * beam_size, beam_size)[:, None].to(device)).view(-1)
 		col = (k_indices % beam_size).view(-1)
 		# row = [batch_size * beam_size]
 		# col = [batch_size * beam_size]
@@ -180,7 +182,7 @@ class BeamSearch:
 		used_attention = attn.sum(1)
 		# used_attention = [batch_size * beam_size, trg_len, src_len]
 
-		best_src_indices = torch.argmax(used_attention, dim=-1).numpy()
+		best_src_indices = torch.argmax(used_attention, dim=-1).cpu().numpy()
 		# select_id_src = [batch_size * beam_size, trg_len]
 
 		repl_tokens = np.array([operator.itemgetter(*src_indices)(src_tokens[bb_i // self.beam_size])
@@ -200,4 +202,4 @@ class BeamSearch:
 
 	def _length(self, tokens: Tensor):
 		eos, = (tokens == self.TRG.vocab.stoi['<eos>']).nonzero(as_tuple=True)
-		return len(tokens) if not eos else eos[0]
+		return len(tokens) if len(eos) == 0 else eos[0]

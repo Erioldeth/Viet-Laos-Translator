@@ -52,4 +52,8 @@ def save_model(model, path):
 
 def load_model(model, path):
 	save_path = os.path.join(path, MODEL_FILE_FORMAT.format('model', EXTENSION))
-	model.load_state_dict(torch.load(save_path))
+	if is_files(save_path):
+		print('Load existed model')
+		model.load_state_dict(torch.load(save_path))
+	else:
+		print('No model to load')

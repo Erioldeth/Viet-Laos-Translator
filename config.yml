@@ -14,20 +14,20 @@ dropout: 0.1
 # training config
 train_max_length: 100
 train_batch_size: 16
-epochs: 20
-# inference config
-infer_max_length: 100
-input_max_length: 150
-infer_batch_size: 16
-decode_strategy_kwargs:
-  beam_size: 5
-  length_normalize: 0.6
+epochs: 30
 # optimizer & learning args
-lr: !!float 1e-3
 optimizer_params:
+  lr: !!float 1e-4
   betas:
     - 0.9
     - 0.98
   eps: !!float 1e-9
 n_warmup_steps: 4000
 label_smoothing: 0.1
+# inference config
+infer_max_length: 100
+input_max_length: 150
+infer_batch_size: 1
+decode_strategy_kwargs:
+  beam_size: 5
+  length_normalize: 0.6

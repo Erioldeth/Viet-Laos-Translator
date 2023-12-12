@@ -6,8 +6,11 @@ import time
 import torch
 import torch.nn as nn
 import yaml
+from laonlp.tokenize import word_tokenize as lo_tokenize
 from torch.optim import Adam
 from torch.optim.lr_scheduler import LambdaLR
+from torchtext.data import Field
+from underthesea import word_tokenize as vi_tokenize
 
 from model.save import save_model
 from module import *
@@ -31,7 +34,13 @@ class Transformer(nn.Module):
 		self.loader = Loader(train_path, valid_path, lang_tuple, opt)
 
 		print('Building vocab ...')
-		self.SRC, self.TRG = self.fields = self.loader.build_fields(model_dir)
+		field_kwargs = {
+			'init_token': '<sos>',
+			'eos_token': '<eos>',
+			'lower': True,
+			'batch_first': True
+		}
+		self.fields = self.SRC, self.TRG = Field(tokenize=lo_tokenize, **field_kwargs), Field(tokenize=vi_tokenize, **field_kwargs)
 
 		print('Creating iterator ...')
 		match mode:
@@ -82,7 +91,7 @@ class Transformer(nn.Module):
 
 		return src_mask, trg_mask
 
-	def perform_training(self, criterion, optimizer, scheduler):
+	def train_epoch(self, criterion, optimizer, scheduler):
 		self.train()
 
 		total_loss = 0.0
@@ -114,7 +123,7 @@ class Transformer(nn.Module):
 
 		return total_loss / len(self.train_iter)
 
-	def perform_validating(self, criterion):
+	def valid_epoch(self, criterion):
 		self.eval()
 
 		total_loss = 0.0
@@ -155,8 +164,7 @@ class Transformer(nn.Module):
 				nn.init.xavier_uniform_(p)
 
 		opt = self.config
-
-		optimizer = Adam(self.parameters(), opt['lr'], **opt['optimizer_params'])
+		optimizer = Adam(self.parameters(), **opt['optimizer_params'])
 		d_model, n_warmup_steps = opt['d_model'], opt['n_warmup_steps']
 		lr_lambda = lambda step: d_model ** (-0.5) * min((step + 1) ** (-0.5), (step + 1) * n_warmup_steps ** (-1.5))
 		scheduler = LambdaLR(optimizer, lr_lambda)
@@ -169,11 +177,11 @@ class Transformer(nn.Module):
 			torch.cuda.empty_cache()
 			start = time.time()
 
-			train_loss = self.perform_training(criterion, optimizer, scheduler)
-			valid_loss = self.perform_validating(criterion)
+			train_loss = self.train_epoch(criterion, optimizer, scheduler)
+			valid_loss = self.valid_epoch(criterion)
 
 			elapsed_time = time.time() - start
-			print(f'Epoch: {epoch + 1:02} - {elapsed_time // 60}m{elapsed_time % 60}s')
+			print(f'Epoch: {epoch + 1:02} - {elapsed_time // 60:.0f}m{elapsed_time % 60:.0f}s')
 			print(f'\tTrain Loss/PPL: {train_loss:7.3f} / {math.exp(train_loss):7.3f}')
 			print(f'\tVal   Loss/PPL: {valid_loss:7.3f} / {math.exp(valid_loss):7.3f}')
 			print('-' * 50)
@@ -205,7 +213,7 @@ class Transformer(nn.Module):
 		                     for translated_sentence in decode_strategy.transl_batch(batch, input_max_len)])
 
 		elapsed_time = time.time() - start
-		print(f'Inference done, cost {elapsed_time // 60}m{elapsed_time % 60}s')
+		print(f'Inference done, cost {elapsed_time // 60:.0f}m{elapsed_time % 60:.0f}s')
 
 		print(f'Writing results to {predictions_file} ...')
 		with io.open(predictions_file, 'w', encoding='utf-8') as file:
