@@ -23,9 +23,6 @@ class BeamSearch:
 		padded_batch, tokenized_batch = self.preprocess_batch(batch, src_size_limit)
 		# padded_batch = [batch_size, max_src_len]
 		# tokenized_batch = [batch_size, *src_len]
-		print(padded_batch)
-		print([self.SRC.vocab.itos[t] for t in padded_batch[0]])
-		print(tokenized_batch)
 
 		translated_batch = self.search(padded_batch, tokenized_batch)
 

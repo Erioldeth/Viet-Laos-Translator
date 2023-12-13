@@ -1,6 +1,5 @@
 import math
 
-import torch
 import torch.nn as nn
 
 from module.sublayer import *
@@ -11,13 +10,14 @@ class Decoder(nn.Module):
 		super().__init__()
 
 		self.tok_embed = nn.Embedding(output_dim, d_model)
-		self.pos_embed = nn.Embedding(max_len, d_model)
+		# self.pos_embed = nn.Embedding(max_len, d_model)
+		self.pe = PositionalEncoding(d_model, dropout, max_len)
 
 		self.layers = nn.ModuleList([DecoderLayer(d_model, heads, dropout) for _ in range(N)])
 
 		self.out = nn.Linear(d_model, output_dim)
 
-		self.dropout = nn.Dropout(dropout)
+		# self.dropout = nn.Dropout(dropout)
 
 		self.device = device
 
@@ -28,12 +28,15 @@ class Decoder(nn.Module):
 		# memory = [batch_size, src_len, d_model]
 		# src_mask = [batch_size, 1, 1, src_len]
 		# trg_mask = [batch_size, 1, trg_len, trg_len]
-		bs, trg_len = trg.shape
+		# bs, trg_len = trg.shape
+		#
+		# pos = torch.arange(0, trg_len)[None].repeat(bs, 1).to(self.device)
+		# # pos = [batch_size, trg_len]
+		#
+		# x = self.dropout(self.tok_embed(trg) * self.scale + self.pos_embed(pos))
+		# # x = [batch_size, trg_len, d_model]
 
-		pos = torch.arange(0, trg_len)[None].repeat(bs, 1).to(self.device)
-		# pos = [batch_size, trg_len]
-
-		x = self.dropout(self.tok_embed(trg) * self.scale + self.pos_embed(pos))
+		x = self.pe(self.tok_embed(trg) * self.scale)
 		# x = [batch_size, trg_len, d_model]
 
 		attn = None

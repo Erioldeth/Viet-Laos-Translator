@@ -12,7 +12,7 @@ n_layers: 6
 heads: 8
 dropout: 0.1
 # training config
-train_max_length: 100
+train_max_length: 150
 train_batch_size: 16
 epochs: 30
 # optimizer & learning args
@@ -22,12 +22,12 @@ optimizer_params:
     - 0.9
     - 0.98
   eps: !!float 1e-9
-n_warmup_steps: 4000
+n_warmup_steps: 3000
 label_smoothing: 0.1
 # inference config
-infer_max_length: 100
-input_max_length: 150
+infer_max_length: 150
+input_max_length: 175
 infer_batch_size: 1
 decode_strategy_kwargs:
-  beam_size: 5
+  beam_size: 3
   length_normalize: 0.6
