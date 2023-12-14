@@ -65,7 +65,8 @@ class BeamSearch:
 
 			trg_mask = torch.tril(torch.ones(i, i)).to(device, dtype=torch.bool)
 
-			output, attn = model.decoder(hypotheses[:, :i], memory, src_mask, trg_mask)
+			with torch.no_grad():
+				output, attn = model.decoder(hypotheses[:, :i], memory, src_mask, trg_mask)
 			# output = [batch_size * beam_size, i, output_dim]
 			# attn = [batch_size * beam_size, heads, i, src_len]
 
@@ -109,14 +110,16 @@ class BeamSearch:
 
 		src = batch.to(device)
 		src_mask = (src != model.src_pad_idx)[:, None, None].to(device)
-		memory = model.encoder(src, src_mask)
+		with torch.no_grad():
+			memory = model.encoder(src, src_mask)
 		# src = [batch_size, src_len]
 		# src_mask = [batch_size, 1, 1, src_len]
 		# memory = [batch_size, src_len, d_model]
 
 		trg = torch.full([batch_size, 1], trg_sos_idx).to(device, dtype=torch.long)
 		trg_mask = torch.tril(torch.ones(1, 1)).to(device, dtype=torch.bool)
-		output, _ = model.decoder(trg, memory, src_mask, trg_mask)
+		with torch.no_grad():
+			output, _ = model.decoder(trg, memory, src_mask, trg_mask)
 		# trg = [batch_size, 1]
 		# trg_mask = [1, 1]
 		# output = [batch_size, 1, output_dim]
@@ -187,7 +190,7 @@ class BeamSearch:
 		                       dtype=object)
 		# repl_tokens = [batch_size * beam_size, trg_len]
 
-		orig_tokens = translated_tokens.ravel()
+		orig_tokens = np.array([beam for beams in translated_tokens for beam in beams], dtype=object)
 		# orig_tokens = [batch_size * beam_size, *trg_len]
 
 		replaced = np.array([[ori if ori != '<unk>' else rpl
