@@ -18,23 +18,15 @@ pip install -r requirements.txt
 ```
 ## Step 1: Prepare the Data
 
-```bash
-cd data/lo_vi
-```
+The current project comes with pre-existing data located in data/lo_vi. If you wish to make changes, please ensure that you maintain the correct names and file formats of the data files
 
-The data includes source (src) and target (trg) sentences extracted from:
+The data includes:
 * `train.lo`
 * `train.vi`
 * `dev.lo`
 * `dev.vi`
 * `test.lo`
 * `test.vi`
-
-| Data set    | Sentences  |               Download              |
-| :---------: | :--------: | :---------------------------------: |
-| Training    | 133,317    | via GitHub or located in data/lo_vi |
-| Development | 1,553      | via GitHub or located in data/lo_vi |
-| Test        | 1,268      | via GitHub or located in data/lo_vi |
 
 ## Step 2: Train the Model
 
@@ -80,7 +72,7 @@ decode_strategy_kwargs:
 Then, run the following command:
 
 ```bash
-python -m main.py train 
+python main.py train 
 ```
 **Note**:
 - After training, the model will be saved in trained_model/, this folder will includes the trained model and vocabulary files.
@@ -90,7 +82,7 @@ python -m main.py train
 The model uses the beam search algorithm and saves the translation at `$your_data_path/translated.vi`.
 
 ```bash
-python -m main.py infer --features_file $your_data_path/test.lo --predictions_file $your_data_path/translated.vi
+python main.py infer --features_file $your_data_path/test.lo --predictions_file $your_data_path/translated.vi
 ```
 
 ## Step 4: Evaluate Quality using BLEU Score
@@ -107,8 +99,6 @@ perl thrid-party/multi-bleu.perl $your_data_path/translated.vi < $your_data_path
 
 
 ## Details and References 
-For more details, please visit [nmtuet.ddns.net](http://nmtuet.ddns.net:1190/).
-
 If you have any feedback or contributions, please send an email to crystaleye005@gmail.com or dannguyenhai10112003@gmail.com
 
 ## Please cite the following paper:
