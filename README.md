@@ -1,8 +1,16 @@
+<div align="center">
+
 # Viet-Laos-Translator
 
-The Viet-Laos-Translator project is an open-source project forked from [KC4.0_MultilingualNMT](https://github.com/KCDichDaNgu/KC4.0_MultilingualNMT).
+[![python](https://img.shields.io/badge/-Python_3.11_-blue?logo=python&logoColor=white)](https://github.com/pre-commit/pre-commit)
+[![pytorch](https://img.shields.io/badge/PyTorch_2.0+-ee4c2c?logo=pytorch&logoColor=white)](https://pytorch.org/get-started/locally/)
+[![contributors](https://img.shields.io/github/contributors/Erioldeth/Viet-Laos-Translator.svg)](https://github.com/Erioldeth/Viet-Laos-Translator/graphs/contributors)
 
-## Setup
+The Viet-Laos-Translator project is an open-source project 🚀 forked from [KC4.0_MultilingualNMT](https://github.com/KCDichDaNgu/KC4.0_MultilingualNMT).
+
+</div>
+
+## 🚀Quickstart
 
 ### Install Viet-Laos-Translator tool
 
@@ -16,7 +24,7 @@ pip install -r requirements.txt
 
 # Quickstart
 ```
-## Step 1: Prepare the Data
+## 📃Prepare the Data
 
 The current project comes with pre-existing data located in data/lo_vi. If you wish to make changes, please ensure that you maintain the correct names and file formats of the data files
 
@@ -28,7 +36,7 @@ The data includes:
 * `test.lo`
 * `test.vi`
 
-## Step 2: Train the Model
+## 🚆Train the Model
 
 To train a new model, edit the YAML config file:
 Modify the config yml config file to set hyperparameters and the path to the training data:
@@ -77,7 +85,7 @@ python main.py train
 **Note**:
 - After training, the model will be saved in trained_model/, this folder will includes the trained model and vocabulary files.
 
-## Step 3: Translate
+## ➡️Translate
 
 The model uses the beam search algorithm and saves the translation at `$your_data_path/translated.vi`.
 
@@ -85,7 +93,7 @@ The model uses the beam search algorithm and saves the translation at `$your_dat
 python main.py infer --features_file $your_data_path/test.lo --predictions_file $your_data_path/translated.vi
 ```
 
-## Step 4: Evaluate Quality using BLEU Score
+## 💯Evaluate Quality using BLEU Score
 
 Evaluate BLEU score using multi-bleu:
 
@@ -93,10 +101,10 @@ Evaluate BLEU score using multi-bleu:
 perl thrid-party/multi-bleu.perl $your_data_path/translated.vi < $your_data_path/test.vi
 ```
 
-## Details and References 
+## 💖Details and References 
 If you have any feedback or contributions, please send an email to crystaleye005@gmail.com or dannguyenhai10112003@gmail.com
 
-## Please cite the following paper:
+## 🖇️Please cite the following paper:
 ```bash
 @inproceedings{ViNMT2022,
   title = {ViNMT: Neural Machine Translation Toolkit},
