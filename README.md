@@ -93,11 +93,6 @@ Evaluate BLEU score using multi-bleu:
 perl thrid-party/multi-bleu.perl $your_data_path/translated.vi < $your_data_path/test.vi
 ```
 
-|        MODEL       | BLEU (Beam Search) |
-| :-----------------:| :----------------: |
-| Transformer (Base) |        25.64       |
-
-
 ## Details and References 
 If you have any feedback or contributions, please send an email to crystaleye005@gmail.com or dannguyenhai10112003@gmail.com
 
