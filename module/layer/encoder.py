@@ -14,6 +14,8 @@ class Encoder(nn.Module):
 
 		self.layers = nn.ModuleList([EncoderLayer(d_model, heads, dropout) for _ in range(N)])
 
+		self.norm = nn.LayerNorm(d_model)
+
 		self.device = device
 
 		self.scale = math.sqrt(d_model)
@@ -28,7 +30,7 @@ class Encoder(nn.Module):
 		for layer in self.layers:
 			x = layer(x, src_mask)
 
-		return x
+		return self.norm(x)
 
 
 class EncoderLayer(nn.Module):

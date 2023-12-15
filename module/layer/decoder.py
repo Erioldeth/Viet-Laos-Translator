@@ -14,6 +14,8 @@ class Decoder(nn.Module):
 
 		self.layers = nn.ModuleList([DecoderLayer(d_model, heads, dropout) for _ in range(N)])
 
+		self.norm = nn.LayerNorm(d_model)
+
 		self.out = nn.Linear(d_model, output_dim)
 
 		self.device = device
@@ -34,7 +36,7 @@ class Decoder(nn.Module):
 			x, attn = layer(x, memory, src_mask, trg_mask)
 		# attn = [batch_size, heads, trg_len, src_len]
 
-		x = self.out(x)
+		x = self.out(self.norm(x))
 		# x = [batch_size, trg_len, output_dim]
 
 		return x, attn
