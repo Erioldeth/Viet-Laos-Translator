@@ -4,7 +4,6 @@
 
 [![python](https://img.shields.io/badge/-Python_3.11_-blue?logo=python&logoColor=white)](https://github.com/pre-commit/pre-commit)
 [![pytorch](https://img.shields.io/badge/PyTorch_2.0+-ee4c2c?logo=pytorch&logoColor=white)](https://pytorch.org/get-started/locally/)
-[![contributors](https://img.shields.io/github/contributors/Erioldeth/Viet-Laos-Translator.svg)](https://github.com/Erioldeth/Viet-Laos-Translator/graphs/contributors)
 
 The Viet-Laos-Translator project is an open-source project 🚀 forked from [KC4.0_MultilingualNMT](https://github.com/KCDichDaNgu/KC4.0_MultilingualNMT).
 
